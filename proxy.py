@@ -350,28 +350,31 @@ async def get_series_episodes(series_id: str):
     url = f"{settings.jellyfin_url}/Shows/{series_id}/Episodes?Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
 
     try:
-        with urllib.request.urlopen(url, timeout=10.0) as response:
-            data = json.loads(response.read())
+        def fetch():
+            with urllib.request.urlopen(url, timeout=10.0) as response:
+                return json.loads(response.read())
 
-            episodes = []
-            for item in data.get('Items', []):
-                item_id = item.get('Id')
-                image_url = None
-                if item.get('ImageTags', {}).get('Primary'):
-                    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+        data = await asyncio.to_thread(fetch)
 
-                episodes.append({
-                    'id': item_id,
-                    'name': item.get('Name'),
-                    'type': 'Episode',
-                    'series': item.get('SeriesName'),
-                    'season': item.get('ParentIndexNumber'),
-                    'episode': item.get('IndexNumber'),
-                    'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
-                    'image': image_url,
-                })
+        episodes = []
+        for item in data.get('Items', []):
+            item_id = item.get('Id')
+            image_url = None
+            if item.get('ImageTags', {}).get('Primary'):
+                image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
 
-            return {"episodes": episodes}
+            episodes.append({
+                'id': item_id,
+                'name': item.get('Name'),
+                'type': 'Episode',
+                'series': item.get('SeriesName'),
+                'season': item.get('ParentIndexNumber'),
+                'episode': item.get('IndexNumber'),
+                'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
+                'image': image_url,
+            })
+
+        return {"episodes": episodes}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch episodes: {e}")
 
@@ -382,33 +385,36 @@ async def get_recent_media(limit: int = Query(20, description="Number of items t
     url = f"{settings.jellyfin_url}/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&Limit={limit}&api_key={settings.jellyfin_api_key}"
 
     try:
-        with urllib.request.urlopen(url, timeout=10.0) as response:
-            data = json.loads(response.read())
+        def fetch():
+            with urllib.request.urlopen(url, timeout=10.0) as response:
+                return json.loads(response.read())
 
-            items = []
-            for item in data.get('Items', []):
-                item_id = item.get('Id')
-                item_type = item.get('Type')
+        data = await asyncio.to_thread(fetch)
 
-                image_url = None
-                if item.get('ImageTags', {}).get('Primary'):
-                    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+        items = []
+        for item in data.get('Items', []):
+            item_id = item.get('Id')
+            item_type = item.get('Type')
 
-                result = {
-                    'id': item_id,
-                    'name': item.get('Name'),
-                    'type': item_type,
-                    'year': item.get('ProductionYear'),
-                    'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
-                    'image': image_url,
-                }
+            image_url = None
+            if item.get('ImageTags', {}).get('Primary'):
+                image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
 
-                if item_type == 'Series':
-                    result['is_series'] = True
+            result = {
+                'id': item_id,
+                'name': item.get('Name'),
+                'type': item_type,
+                'year': item.get('ProductionYear'),
+                'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
+                'image': image_url,
+            }
 
-                items.append(result)
+            if item_type == 'Series':
+                result['is_series'] = True
 
-            return {"items": items}
+            items.append(result)
+
+        return {"items": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch recent media: {e}")
 
@@ -423,43 +429,46 @@ async def search_media(q: str = Query("", description="Search query")):
     url = f"{settings.jellyfin_url}/Items?searchTerm={urllib.parse.quote(q)}&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
 
     try:
-        with urllib.request.urlopen(url, timeout=10.0) as response:
-            data = json.loads(response.read())
-            print(f"DEBUG: Jellyfin search returned {data.get('TotalRecordCount', 0)} items")
+        def fetch():
+            with urllib.request.urlopen(url, timeout=10.0) as response:
+                return json.loads(response.read())
 
-            # Simplify response for frontend
-            items = []
-            for item in data.get('Items', []):
-                item_id = item.get('Id')
-                item_type = item.get('Type')
+        data = await asyncio.to_thread(fetch)
+        print(f"DEBUG: Jellyfin search returned {data.get('TotalRecordCount', 0)} items")
 
-                # Build image URL if item has primary image
-                image_url = None
-                if item.get('ImageTags', {}).get('Primary'):
-                    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+        # Simplify response for frontend
+        items = []
+        for item in data.get('Items', []):
+            item_id = item.get('Id')
+            item_type = item.get('Type')
 
-                result = {
-                    'id': item_id,
-                    'name': item.get('Name'),
-                    'type': item_type,
-                    'year': item.get('ProductionYear'),
-                    'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
-                    'image': image_url,
-                }
+            # Build image URL if item has primary image
+            image_url = None
+            if item.get('ImageTags', {}).get('Primary'):
+                image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
 
-                # Add episode-specific info
-                if item_type == 'Episode':
-                    result['series'] = item.get('SeriesName')
-                    result['season'] = item.get('ParentIndexNumber')
-                    result['episode'] = item.get('IndexNumber')
-                elif item_type == 'Series':
-                    # For series, we want to fetch episodes
-                    result['is_series'] = True
+            result = {
+                'id': item_id,
+                'name': item.get('Name'),
+                'type': item_type,
+                'year': item.get('ProductionYear'),
+                'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
+                'image': image_url,
+            }
 
-                items.append(result)
+            # Add episode-specific info
+            if item_type == 'Episode':
+                result['series'] = item.get('SeriesName')
+                result['season'] = item.get('ParentIndexNumber')
+                result['episode'] = item.get('IndexNumber')
+            elif item_type == 'Series':
+                # For series, we want to fetch episodes
+                result['is_series'] = True
 
-            print(f"DEBUG: Returning {len(items)} items to frontend")
-            return {"items": items}
+            items.append(result)
+
+        print(f"DEBUG: Returning {len(items)} items to frontend")
+        return {"items": items}
     except Exception as e:
         print(f"DEBUG: Search error: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {e}")
@@ -525,8 +534,12 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
     jellyfin_url = active_streams[stream_key]['jellyfin_url']
 
     try:
-        with urllib.request.urlopen(jellyfin_url, timeout=30.0) as response:
-            content = response.read()
+        # Run blocking urllib call in thread pool to avoid blocking event loop
+        def fetch_playlist():
+            with urllib.request.urlopen(jellyfin_url, timeout=60.0) as response:
+                return response.read()
+
+        content = await asyncio.to_thread(fetch_playlist)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch playlist: {e}")
 
