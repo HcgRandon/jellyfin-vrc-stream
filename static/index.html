@@ -293,6 +293,170 @@
         .btn-danger:hover {
             background: #e53e3e;
         }
+
+        .streams-container {
+            display: none;
+            margin-top: 20px;
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .streams-container.show {
+            display: block;
+        }
+
+        .stream-item {
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .stream-key {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .stream-title {
+            font-size: 13px;
+            color: #444;
+            margin-bottom: 8px;
+        }
+
+        .stream-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .stream-meta-item {
+            font-size: 14px;
+            padding: 8px;
+            background: #f9fafb;
+            border-radius: 4px;
+        }
+
+        .stream-meta-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 15px;
+        }
+
+        .stream-meta-value {
+            color: #777;
+            margin-left: 4px;
+        }
+
+        .stream-image {
+            width: 60px;
+            height: 90px;
+            border-radius: 4px;
+            object-fit: cover;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+
+        .stream-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .converter-box {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .converter-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .converter-input {
+            width: 100%;
+            padding: 12px;
+            font-size: 14px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+
+        .converter-result {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f0f4f8;
+            border-radius: 6px;
+            word-break: break-all;
+        }
+
+        .converter-result.show {
+            display: block;
+        }
+
+        .btn-close {
+            background: #cbd5e0;
+            color: #2d3748;
+            padding: 5px 10px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+
+        .btn-close:hover {
+            background: #a0aec0;
+        }
+
+        .stream-options {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background: #f9fafb;
+            border-radius: 6px;
+        }
+
+        .stream-options.show {
+            display: block;
+        }
+
+        .stream-select {
+            margin-bottom: 10px;
+        }
+
+        .stream-select label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stream-select select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .btn-delete {
+            background: #f56565;
+            color: white;
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .btn-delete:hover {
+            background: #e53e3e;
+        }
     </style>
 </head>
 <body>
@@ -311,11 +475,24 @@
                 </div>
             </div>
             <div class="controls">
-                <button class="btn-control" onclick="viewActiveStreams()">View Active Streams</button>
+                <button class="btn-control" onclick="toggleActiveStreams()">View Active Streams</button>
                 <button class="btn-control" onclick="runCleanup()">Run Cleanup</button>
                 <button class="btn-control btn-danger" onclick="refreshPage()">Refresh Page</button>
             </div>
+            <div class="streams-container" id="streams-container">
+                <div class="loading">Loading streams...</div>
+            </div>
         </header>
+
+        <div class="converter-box">
+            <div class="converter-title">Convert Jellyfin Share URL</div>
+            <input type="text" class="converter-input" id="converterInput" placeholder="Paste Jellyfin share URL here (e.g., https://jellyfin.../Download?api_key=...)">
+            <div class="url-buttons">
+                <button class="btn-vod" onclick="convertUrl('vod')">Convert to VOD</button>
+                <button class="btn-live" onclick="convertUrl('live')">Convert to Live</button>
+            </div>
+            <div class="converter-result" id="converterResult"></div>
+        </div>
 
         <div class="search-box">
             <input type="text" class="search-input" id="searchInput" placeholder="Search for movies or TV shows...">
@@ -474,7 +651,7 @@
                 `;
             }
 
-            // Movies and Episodes get generate buttons
+            // Movies and Episodes get track selection
             return `
                 <div class="result-item">
                     ${imageHtml}
@@ -483,13 +660,115 @@
                         <div class="result-meta">${meta.join(' • ')}</div>
                         ${item.overview ? `<div class="result-overview">${item.overview}...</div>` : ''}
                         <div class="url-buttons">
-                            <button class="btn-vod" onclick="generateUrl('${item.id}', 'vod', this)">VOD Mode</button>
-                            <button class="btn-live" onclick="generateUrl('${item.id}', 'live', this)">Live Mode</button>
+                            <button class="btn-expand" onclick="toggleStreamOptions('${item.id}', this)">Select Tracks</button>
                         </div>
-                        <div class="url-display" id="url-${item.id}"></div>
+                        <div class="stream-options" id="options-${item.id}">
+                            <div class="loading">Loading track options...</div>
+                        </div>
                     </div>
                 </div>
             `;
+        }
+
+        async function toggleStreamOptions(mediaId, button) {
+            const container = document.getElementById(`options-${mediaId}`);
+
+            if (container.classList.contains('show')) {
+                container.classList.remove('show');
+                button.textContent = 'Select Tracks';
+                return;
+            }
+
+            // Load stream options if not already loaded
+            if (container.dataset.loaded !== 'true') {
+                try {
+                    const response = await fetch(`${baseUrl}/media/${mediaId}/streams`);
+                    const data = await response.json();
+
+                    const audioOptions = data.audio_streams.map(s =>
+                        `<option value="${s.index}" ${s.index === data.default_audio ? 'selected' : ''}>${s.title || s.language}</option>`
+                    ).join('');
+
+                    const subtitleOptions = data.subtitle_streams.map(s =>
+                        `<option value="${s.index}" ${s.index === data.default_subtitle ? 'selected' : ''}>${s.title || s.language}</option>`
+                    ).join('');
+
+                    container.innerHTML = `
+                        <div class="stream-select">
+                            <label>Audio Track:</label>
+                            <select id="audio-${mediaId}" onchange="updateUrls('${mediaId}')">
+                                ${audioOptions || '<option value="">No audio tracks</option>'}
+                            </select>
+                        </div>
+                        <div class="stream-select">
+                            <label>Subtitle Track:</label>
+                            <select id="subtitle-${mediaId}" onchange="updateUrls('${mediaId}')">
+                                <option value="">None</option>
+                                ${subtitleOptions}
+                            </select>
+                        </div>
+                        <div style="margin-top: 15px; display: flex; gap: 15px;">
+                            <div style="flex: 1;">
+                                <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL:</div>
+                                <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="vod-url-${mediaId}"></div>
+                                <button class="btn-copy" onclick="copyUrlFromDiv('vod-url-${mediaId}', this)" style="margin-top: 5px;">Copy VOD</button>
+                            </div>
+                            <div style="flex: 1;">
+                                <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL:</div>
+                                <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="live-url-${mediaId}"></div>
+                                <button class="btn-copy" onclick="copyUrlFromDiv('live-url-${mediaId}', this)" style="margin-top: 5px;">Copy Live</button>
+                            </div>
+                        </div>
+                    `;
+
+                    container.dataset.loaded = 'true';
+
+                    // Generate initial URLs
+                    updateUrls(mediaId);
+                } catch (error) {
+                    container.innerHTML = `<div class="no-results">Error loading tracks: ${error.message}</div>`;
+                }
+            }
+
+            container.classList.add('show');
+            button.textContent = 'Hide Tracks';
+        }
+
+        function updateUrls(mediaId) {
+            const audioSelect = document.getElementById(`audio-${mediaId}`);
+            const subtitleSelect = document.getElementById(`subtitle-${mediaId}`);
+
+            const audio = audioSelect?.value || '';
+            const subtitle = subtitleSelect?.value || '';
+
+            // Build VOD URL
+            let vodUrl = `${baseUrl}/media.m3u8?m=${mediaId}`;
+            if (audio) vodUrl += `&audio=${audio}`;
+            if (subtitle) vodUrl += `&subtitle=${subtitle}`;
+
+            // Build Live URL
+            let liveUrl = `${baseUrl}/live.m3u8?m=${mediaId}`;
+            if (audio) liveUrl += `&audio=${audio}`;
+            if (subtitle) liveUrl += `&subtitle=${subtitle}`;
+
+            // Update divs
+            const vodDiv = document.getElementById(`vod-url-${mediaId}`);
+            const liveDiv = document.getElementById(`live-url-${mediaId}`);
+
+            if (vodDiv) vodDiv.textContent = vodUrl;
+            if (liveDiv) liveDiv.textContent = liveUrl;
+        }
+
+        function copyUrlFromDiv(divId, button) {
+            const div = document.getElementById(divId);
+            const url = div.textContent.trim();
+
+            if (!url) {
+                alert('No URL to copy');
+                return;
+            }
+
+            copyUrl(url, button);
         }
 
         async function toggleEpisodes(seriesId, button) {
@@ -523,10 +802,11 @@
                                         <div class="episode-title">${epTitle}</div>
                                         ${ep.overview ? `<div class="result-overview">${ep.overview}...</div>` : ''}
                                         <div class="url-buttons">
-                                            <button class="btn-vod" onclick="generateUrl('${ep.id}', 'vod', this)">VOD Mode</button>
-                                            <button class="btn-live" onclick="generateUrl('${ep.id}', 'live', this)">Live Mode</button>
+                                            <button class="btn-expand" onclick="toggleStreamOptions('${ep.id}', this)">Select Tracks</button>
                                         </div>
-                                        <div class="url-display" id="url-${ep.id}"></div>
+                                        <div class="stream-options" id="options-${ep.id}">
+                                            <div class="loading">Loading track options...</div>
+                                        </div>
                                     </div>
                                 </div>
                             `;
@@ -543,18 +823,6 @@
             button.textContent = 'Hide Episodes';
         }
 
-        function generateUrl(mediaId, mode, button) {
-            const endpoint = mode === 'vod' ? 'media.m3u8' : 'live.m3u8';
-            const url = `${baseUrl}/${endpoint}?m=${mediaId}`;
-
-            const urlDiv = document.getElementById(`url-${mediaId}`);
-            urlDiv.innerHTML = `
-                ${url}
-                <button class="btn-copy" onclick="copyUrl('${url}', this)" style="margin-left: 10px;">Copy</button>
-            `;
-            urlDiv.classList.add('show');
-        }
-
         async function copyUrl(url, button) {
             try {
                 await navigator.clipboard.writeText(url);
@@ -568,21 +836,106 @@
             }
         }
 
-        async function viewActiveStreams() {
+        let streamsRefreshInterval = null;
+
+        async function toggleActiveStreams() {
+            const container = document.getElementById('streams-container');
+            const button = event.target;
+
+            if (container.classList.contains('show')) {
+                container.classList.remove('show');
+                button.textContent = 'View Active Streams';
+                if (streamsRefreshInterval) {
+                    clearInterval(streamsRefreshInterval);
+                    streamsRefreshInterval = null;
+                }
+                return;
+            }
+
+            container.classList.add('show');
+            button.textContent = 'Hide Active Streams';
+
+            // Load streams immediately
+            await loadActiveStreams();
+
+            // Auto-refresh every 3 seconds
+            streamsRefreshInterval = setInterval(loadActiveStreams, 3000);
+        }
+
+        async function loadActiveStreams() {
+            const container = document.getElementById('streams-container');
+
             try {
                 const response = await fetch(`${baseUrl}/streams`);
                 const data = await response.json();
 
                 if (data.streams.length === 0) {
-                    alert('No active streams');
+                    container.innerHTML = '<div class="no-results">No active streams</div>';
                     return;
                 }
 
-                const streamInfo = data.streams.map(s =>
-                    `${s.stream_key}\n  Media ID: ${s.media_id}\n  Mode: ${s.mode}\n  Idle: ${s.idle_seconds}s\n  Age: ${s.age_seconds}s`
-                ).join('\n\n');
+                container.innerHTML = `
+                    <div style="margin-bottom: 10px; font-weight: 600;">Active Streams: ${data.streams.length} | Cache: ${data.cache_size_mb} MB</div>
+                    ${data.streams.map(s => {
+                        const title = s.media_type === 'Episode' && s.series_name
+                            ? `${s.series_name} - S${s.season}E${s.episode} - ${s.media_name}`
+                            : s.media_name || s.media_id;
 
-                alert(`Active Streams (${data.streams.length}):\n\n${streamInfo}\n\nCache Size: ${data.cache_size_mb} MB`);
+                        const imageHtml = s.media_image
+                            ? `<img src="${s.media_image}" class="stream-image" alt="${s.media_name}">`
+                            : '';
+
+                        return `
+                            <div class="stream-item">
+                                <div style="display: flex; gap: 12px;">
+                                    ${imageHtml}
+                                    <div class="stream-content">
+                                        <div class="stream-title">${title}</div>
+                                        <div class="stream-key">Stream: ${s.stream_key}</div>
+                                        <div class="stream-meta">
+                                            <div class="stream-meta-item">
+                                                <span class="stream-meta-label">Mode:</span>
+                                                <span class="stream-meta-value">${s.mode}</span>
+                                            </div>
+                                            <div class="stream-meta-item">
+                                                <span class="stream-meta-label">Idle:</span>
+                                                <span class="stream-meta-value">${s.idle_seconds}s</span>
+                                            </div>
+                                            <div class="stream-meta-item">
+                                                <span class="stream-meta-label">Age:</span>
+                                                <span class="stream-meta-value">${s.age_seconds}s</span>
+                                            </div>
+                                            <div class="stream-meta-item">
+                                                <span class="stream-meta-label">Type:</span>
+                                                <span class="stream-meta-value">${s.media_type}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button class="btn-delete" onclick="deleteStream('${s.stream_key}')" style="align-self: flex-start;">Delete</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                `;
+            } catch (error) {
+                container.innerHTML = `<div class="no-results">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function deleteStream(streamKey) {
+            if (!confirm(`Delete stream: ${streamKey}?\n\nThis will stop the stream and clear its cache.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}`, { method: 'DELETE' });
+                const data = await response.json();
+
+                // Refresh the streams list
+                await loadActiveStreams();
+
+                // Refresh stats
+                loadStats();
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -601,6 +954,11 @@
 
                 // Refresh stats
                 loadStats();
+
+                // Refresh streams if visible
+                if (document.getElementById('streams-container').classList.contains('show')) {
+                    await loadActiveStreams();
+                }
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -608,6 +966,40 @@
 
         function refreshPage() {
             location.reload();
+        }
+
+        function convertUrl(mode) {
+            const input = document.getElementById('converterInput');
+            const result = document.getElementById('converterResult');
+            const url = input.value.trim();
+
+            if (!url) {
+                alert('Please paste a Jellyfin share URL');
+                return;
+            }
+
+            try {
+                // Extract media ID from URL
+                // Format: https://jellyfin.../Items/{ID}/Download?api_key=...
+                const match = url.match(/\/Items\/([a-f0-9]+)\//i);
+                if (!match) {
+                    alert('Could not extract media ID from URL. Make sure it\'s a valid Jellyfin share URL.');
+                    return;
+                }
+
+                const mediaId = match[1];
+                const endpoint = mode === 'vod' ? 'media.m3u8' : 'live.m3u8';
+                const streamUrl = `${baseUrl}/${endpoint}?m=${mediaId}`;
+
+                result.innerHTML = `
+                    <div style="margin-bottom: 10px; font-weight: 600;">Converted URL (${mode.toUpperCase()} mode):</div>
+                    <div style="margin-bottom: 10px; word-break: break-all;">${streamUrl}</div>
+                    <button class="btn-copy" onclick="copyUrl('${streamUrl}', this)">Copy URL</button>
+                `;
+                result.classList.add('show');
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
         }
     </script>
 </body>

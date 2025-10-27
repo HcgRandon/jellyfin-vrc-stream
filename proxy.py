@@ -289,6 +289,48 @@ async def management_portal():
     raise HTTPException(status_code=404, detail="Management portal not found")
 
 
+@app.get("/media/{media_id}/streams")
+async def get_media_streams(media_id: str):
+    """Get available audio and subtitle streams for a media item"""
+    try:
+        item_info = get_item_info(media_id)
+        media_streams = item_info.get('MediaSources', [{}])[0].get('MediaStreams', [])
+
+        # Get audio streams
+        audio_streams = []
+        for stream in media_streams:
+            if stream.get('Type') == 'Audio':
+                audio_streams.append({
+                    'index': stream.get('Index'),
+                    'language': stream.get('Language', 'und'),
+                    'title': stream.get('DisplayTitle', ''),
+                    'codec': stream.get('Codec', ''),
+                })
+
+        # Get subtitle streams
+        subtitle_streams = []
+        for stream in media_streams:
+            if stream.get('Type') == 'Subtitle':
+                subtitle_streams.append({
+                    'index': stream.get('Index'),
+                    'language': stream.get('Language', 'und'),
+                    'title': stream.get('DisplayTitle', ''),
+                    'codec': stream.get('Codec', ''),
+                })
+
+        # Get default selections
+        default_audio, default_subtitle = find_best_streams(item_info)
+
+        return {
+            'audio_streams': audio_streams,
+            'subtitle_streams': subtitle_streams,
+            'default_audio': default_audio,
+            'default_subtitle': default_subtitle,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch streams: {e}")
+
+
 @app.get("/series/{series_id}/episodes")
 async def get_series_episodes(series_id: str):
     """Get all episodes for a series"""
@@ -604,21 +646,45 @@ async def get_live_segment(media_id: str, segment_file: str):
 
 @app.get("/streams")
 async def list_streams():
-    """List active streams"""
+    """List active streams with media details"""
     current_time = time.time()
+    streams = []
+
+    for key, info in active_streams.items():
+        stream_info = {
+            "stream_key": key,
+            "media_id": info['media_id'],
+            "audio": info.get('audio'),
+            "subtitle": info.get('subtitle'),
+            "mode": info.get('mode'),
+            "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
+            "age_seconds": int(current_time - info.get('created_at', current_time)),
+        }
+
+        # Try to fetch media details
+        try:
+            item_info = get_item_info(info['media_id'])
+            stream_info['media_name'] = item_info.get('Name', 'Unknown')
+            stream_info['media_type'] = item_info.get('Type', 'Unknown')
+
+            # Add image if available
+            if item_info.get('ImageTags', {}).get('Primary'):
+                stream_info['media_image'] = f"{settings.jellyfin_url}/Items/{info['media_id']}/Images/Primary?maxHeight=100&quality=80"
+
+            # Add series info for episodes
+            if item_info.get('Type') == 'Episode':
+                stream_info['series_name'] = item_info.get('SeriesName')
+                stream_info['season'] = item_info.get('ParentIndexNumber')
+                stream_info['episode'] = item_info.get('IndexNumber')
+        except:
+            # If fetching fails, just use defaults
+            stream_info['media_name'] = 'Unknown'
+            stream_info['media_type'] = 'Unknown'
+
+        streams.append(stream_info)
+
     return {
-        "streams": [
-            {
-                "stream_key": key,
-                "media_id": info['media_id'],
-                "audio": info.get('audio'),
-                "subtitle": info.get('subtitle'),
-                "mode": info.get('mode'),
-                "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
-                "age_seconds": int(current_time - info.get('created_at', current_time)),
-            }
-            for key, info in active_streams.items()
-        ],
+        "streams": streams,
         "cache_size_mb": round(get_cache_size_mb(), 2)
     }
 
