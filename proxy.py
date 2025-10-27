@@ -172,7 +172,7 @@ async def get_playlist(
             params['SubtitleStreamIndex'] = str(subtitle)
 
         param_str = '&'.join([f"{k}={v}" for k, v in params.items()])
-        jellyfin_url = f"{settings.jellyfin_url}/Videos/{m}/live.m3u8?{param_str}"
+        jellyfin_url = f"{settings.jellyfin_url}/Videos/{m}/main.m3u8?{param_str}"
 
         active_streams[stream_key] = {
             'jellyfin_url': jellyfin_url,
