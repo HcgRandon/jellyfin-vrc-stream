@@ -9,7 +9,7 @@ Simple Jellyfin HLS Proxy for VRChat
 import re
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic_settings import BaseSettings
 import urllib.request
@@ -97,18 +97,39 @@ def fetch_and_cache(url: str, cache_path: Path) -> Path:
         raise HTTPException(status_code=500, detail=f"Failed to fetch content: {e}")
 
 
-def rewrite_playlist(content: bytes, media_id: str) -> str:
-    """Rewrite playlist URLs to point to our proxy"""
+def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
+    """Rewrite VOD playlist URLs - preserves query params"""
     text = content.decode('utf-8')
     lines = text.split('\n')
     new_lines = []
 
     for line in lines:
         if line and not line.startswith('#'):
-            match = re.search(r'hls\d*/[^/]+/([^/]+\.ts)', line)
+            # VOD segments have query params we need to preserve
+            # Format: hls1/main/0.ts?mediaSourceId=...&runtimeTicks=...
+            match = re.search(r'hls\d*/[^/]+/(.+\.ts.*)', line)
+            if match:
+                segment_path = match.group(1)  # Includes query params
+                new_lines.append(f"/vod/{media_id}/{segment_path}")
+                continue
+        new_lines.append(line)
+
+    return '\n'.join(new_lines)
+
+
+def rewrite_playlist_live(content: bytes, media_id: str) -> str:
+    """Rewrite live playlist URLs - simple segments"""
+    text = content.decode('utf-8')
+    lines = text.split('\n')
+    new_lines = []
+
+    for line in lines:
+        if line and not line.startswith('#'):
+            # Live segments are simpler
+            match = re.search(r'hls\d*/[^/]+/([^/?]+\.ts)', line)
             if match:
                 segment_file = match.group(1)
-                new_lines.append(f"/s/{media_id}/{segment_file}")
+                new_lines.append(f"/live/{media_id}/{segment_file}")
                 continue
         new_lines.append(line)
 
@@ -128,22 +149,13 @@ async def health():
     return {"status": "healthy"}
 
 
-@app.get("/media.m3u8")
-async def get_playlist(
-    m: str = Query(..., description="Media ID"),
-    audio: Optional[int] = Query(None, description="Audio stream index"),
-    subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
-):
-    """Get HLS playlist - proxy from Jellyfin and cache"""
+async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[int], mode: str):
+    """Common playlist logic for both VOD and live modes"""
+    stream_key = f"{m}_{audio}_{subtitle}_{mode}"
 
-    # Create stream key
-    stream_key = f"{m}_{audio}_{subtitle}"
-
-    # If not cached, fetch item info and determine streams
     if stream_key not in active_streams:
         item_info = get_item_info(m)
 
-        # Auto-select streams if not specified
         if audio is None or subtitle is None:
             auto_audio, auto_sub = find_best_streams(item_info)
             if audio is None:
@@ -151,7 +163,6 @@ async def get_playlist(
             if subtitle is None:
                 subtitle = auto_sub
 
-        # Build Jellyfin URL
         params = {
             'mediaSourceId': m,
             'api_key': settings.jellyfin_api_key,
@@ -172,30 +183,26 @@ async def get_playlist(
             params['SubtitleStreamIndex'] = str(subtitle)
 
         param_str = '&'.join([f"{k}={v}" for k, v in params.items()])
-        jellyfin_url = f"{settings.jellyfin_url}/Videos/{m}/main.m3u8?{param_str}"
+        endpoint = "main.m3u8" if mode == "vod" else "live.m3u8"
+        jellyfin_url = f"{settings.jellyfin_url}/Videos/{m}/{endpoint}?{param_str}"
 
         active_streams[stream_key] = {
             'jellyfin_url': jellyfin_url,
             'media_id': m,
             'audio': audio,
             'subtitle': subtitle,
+            'mode': mode,
         }
 
-    # Fetch playlist from Jellyfin
     jellyfin_url = active_streams[stream_key]['jellyfin_url']
-    cache_path = Path(settings.cache_dir) / stream_key / "playlist.m3u8"
 
-    # Always fetch fresh playlist
     try:
         with urllib.request.urlopen(jellyfin_url, timeout=30.0) as response:
             content = response.read()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch playlist: {e}")
 
-    # Rewrite playlist to point to our proxy
-    rewritten = rewrite_playlist(content, m)
-
-    # Store session info for segment fetching
+    # Store session info
     if content:
         match = re.search(rb'(hls\d*)/([^/]+)/', content)
         if match:
@@ -204,6 +211,12 @@ async def get_playlist(
             active_streams[stream_key]['hls_dir'] = hls_dir
             active_streams[stream_key]['session_id'] = session_id
 
+    # Rewrite based on mode
+    if mode == "vod":
+        rewritten = rewrite_playlist_vod(content, m)
+    else:
+        rewritten = rewrite_playlist_live(content, m)
+
     return PlainTextResponse(
         rewritten,
         media_type="application/vnd.apple.mpegurl",
@@ -211,13 +224,76 @@ async def get_playlist(
     )
 
 
-@app.get("/s/{media_id}/{segment_file}")
-async def get_segment(media_id: str, segment_file: str):
-    """Get HLS segment - proxy from Jellyfin and cache"""
+@app.get("/media.m3u8")
+async def get_vod_playlist(
+    m: str = Query(..., description="Media ID"),
+    audio: Optional[int] = Query(None, description="Audio stream index"),
+    subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
+):
+    """Get VOD HLS playlist (seekable, full video)"""
+    return await _get_stream_playlist(m, audio, subtitle, "vod")
+
+
+@app.get("/live.m3u8")
+async def get_live_playlist(
+    m: str = Query(..., description="Media ID"),
+    audio: Optional[int] = Query(None, description="Audio stream index"),
+    subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
+):
+    """Get live HLS playlist (real-time streaming)"""
+    return await _get_stream_playlist(m, audio, subtitle, "live")
+
+
+@app.get("/vod/{media_id}/{segment_path:path}")
+async def get_vod_segment(media_id: str, segment_path: str, request: Request):
+    """Get VOD segment with query params preserved"""
 
     stream_key = None
     for key, info in active_streams.items():
-        if info['media_id'] == media_id:
+        if info['media_id'] == media_id and info.get('mode') == 'vod':
+            stream_key = key
+            break
+
+    if not stream_key or 'session_id' not in active_streams[stream_key]:
+        raise HTTPException(status_code=404, detail="Stream not found or not initialized")
+
+    session_id = active_streams[stream_key]['session_id']
+    hls_dir = active_streams[stream_key].get('hls_dir', 'hls1')
+
+    # Extract segment filename for cache key (without query params)
+    segment_file = segment_path.split('?')[0]
+    cache_path = Path(settings.cache_dir) / stream_key / segment_file
+
+    if cache_path.exists():
+        return FileResponse(
+            cache_path,
+            media_type="video/mp2t",
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    # Build Jellyfin URL preserving query params
+    query_string = request.url.query
+    if query_string:
+        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}?{query_string}"
+    else:
+        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}"
+
+    fetch_and_cache(segment_url, cache_path)
+
+    return FileResponse(
+        cache_path,
+        media_type="video/mp2t",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
+
+@app.get("/live/{media_id}/{segment_file}")
+async def get_live_segment(media_id: str, segment_file: str):
+    """Get live segment - simple filename"""
+
+    stream_key = None
+    for key, info in active_streams.items():
+        if info['media_id'] == media_id and info.get('mode') == 'live':
             stream_key = key
             break
 

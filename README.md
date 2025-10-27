@@ -26,10 +26,12 @@ A simple FastAPI proxy service that:
 
 ## API Endpoints
 
-### Get Stream
+### VOD Mode (Seekable, Full Video)
 ```
 GET /media.m3u8?m={media_id}
 ```
+
+Uses Jellyfin's `main.m3u8` endpoint for full video playback with seeking support.
 
 **Query Parameters:**
 - `m` (required): Jellyfin media item ID
@@ -45,9 +47,28 @@ curl http://proxy:8000/media.m3u8?m=abc123
 curl http://proxy:8000/media.m3u8?m=abc123&audio=2&subtitle=5
 ```
 
-### Get Segment
+### Live Streaming Mode
 ```
-GET /s/{media_id}/{segment_file}
+GET /live.m3u8?m={media_id}
+```
+
+Uses Jellyfin's `live.m3u8` endpoint for real-time streaming (no seeking).
+
+**Query Parameters:**
+- `m` (required): Jellyfin media item ID
+- `audio` (optional): Audio stream index (auto-selects jpn > eng if not specified)
+- `subtitle` (optional): Subtitle stream index (auto-selects eng if not specified)
+
+**Example:**
+```bash
+# Live stream with auto-selected streams
+curl http://proxy:8000/live.m3u8?m=abc123
+```
+
+### Get Segments
+```
+GET /vod/{media_id}/{segment_path:path}  # VOD mode segments
+GET /live/{media_id}/{segment_file}      # Live mode segments
 ```
 
 Automatically served after playlist request.
@@ -111,8 +132,14 @@ kubectl get svc jellyfin-vrc-stream-service
 
 Use the proxy URL in VRChat video players:
 
+**VOD Mode (recommended for full videos with seeking):**
 ```
 http://proxy:8000/media.m3u8?m=<media_id>
+```
+
+**Live Mode (for real-time streaming without seeking):**
+```
+http://proxy:8000/live.m3u8?m=<media_id>
 ```
 
 **All viewers using the same URL watch the same synchronized stream!**
