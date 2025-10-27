@@ -213,14 +213,14 @@ def find_best_streams(item_info):
     return audio_index, subtitle_index
 
 
-def fetch_and_cache(url: str, cache_path: Path, timeout: float = 60.0) -> Path:
+async def fetch_and_cache(url: str, cache_path: Path, timeout: float = 60.0) -> Path:
     """Fetch content from URL and cache it with streaming"""
     if cache_path.exists():
         return cache_path
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
+    def _blocking_fetch():
         # Stream the content in chunks instead of loading all at once
         with urllib.request.urlopen(url, timeout=timeout) as response:
             with open(cache_path, 'wb') as f:
@@ -230,7 +230,11 @@ def fetch_and_cache(url: str, cache_path: Path, timeout: float = 60.0) -> Path:
                     if not chunk:
                         break
                     f.write(chunk)
-            return cache_path
+        return cache_path
+
+    try:
+        # Run blocking I/O in thread pool to avoid blocking event loop
+        return await asyncio.to_thread(_blocking_fetch)
     except urllib.error.HTTPError as e:
         raise HTTPException(status_code=e.code, detail=f"Jellyfin error: {e.reason}")
     except urllib.error.URLError as e:
@@ -626,7 +630,7 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
     segment_num = segment_file.split('.')[0]
     timeout = 120.0 if segment_num in ['0', '1', '2'] else 60.0
 
-    fetch_and_cache(segment_url, cache_path, timeout=timeout)
+    await fetch_and_cache(segment_url, cache_path, timeout=timeout)
 
     return FileResponse(
         cache_path,
@@ -668,7 +672,7 @@ async def get_live_segment(media_id: str, segment_file: str):
     segment_num = segment_file.split('.')[0]
     timeout = 120.0 if segment_num in ['0', '1', '2'] else 60.0
 
-    fetch_and_cache(segment_url, cache_path, timeout=timeout)
+    await fetch_and_cache(segment_url, cache_path, timeout=timeout)
 
     return FileResponse(
         cache_path,
