@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY proxy.py .
+COPY static/ ./static/
 
 # Create cache directory
 RUN mkdir -p /tmp/hls-cache && chmod 777 /tmp/hls-cache

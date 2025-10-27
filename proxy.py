@@ -13,9 +13,11 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic_settings import BaseSettings
 import urllib.request
+import urllib.parse
 import json
 
 
@@ -36,6 +38,11 @@ app = FastAPI(title="Jellyfin HLS Proxy")
 
 # Ensure cache directory exists
 Path(settings.cache_dir).mkdir(parents=True, exist_ok=True)
+
+# Mount static files if directory exists
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Track active streams
 active_streams = {}
@@ -260,6 +267,136 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/manage", response_class=HTMLResponse)
+async def management_portal():
+    """Serve management portal"""
+    static_file = Path(__file__).parent / "static" / "index.html"
+    if static_file.exists():
+        return HTMLResponse(content=static_file.read_text())
+    raise HTTPException(status_code=404, detail="Management portal not found")
+
+
+@app.get("/series/{series_id}/episodes")
+async def get_series_episodes(series_id: str):
+    """Get all episodes for a series"""
+    url = f"{settings.jellyfin_url}/Shows/{series_id}/Episodes?Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
+
+    try:
+        with urllib.request.urlopen(url, timeout=10.0) as response:
+            data = json.loads(response.read())
+
+            episodes = []
+            for item in data.get('Items', []):
+                item_id = item.get('Id')
+                image_url = None
+                if item.get('ImageTags', {}).get('Primary'):
+                    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+
+                episodes.append({
+                    'id': item_id,
+                    'name': item.get('Name'),
+                    'type': 'Episode',
+                    'series': item.get('SeriesName'),
+                    'season': item.get('ParentIndexNumber'),
+                    'episode': item.get('IndexNumber'),
+                    'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
+                    'image': image_url,
+                })
+
+            return {"episodes": episodes}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch episodes: {e}")
+
+
+@app.get("/recent")
+async def get_recent_media(limit: int = Query(20, description="Number of items to return")):
+    """Get recently added media"""
+    url = f"{settings.jellyfin_url}/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&Limit={limit}&api_key={settings.jellyfin_api_key}"
+
+    try:
+        with urllib.request.urlopen(url, timeout=10.0) as response:
+            data = json.loads(response.read())
+
+            items = []
+            for item in data.get('Items', []):
+                item_id = item.get('Id')
+                item_type = item.get('Type')
+
+                image_url = None
+                if item.get('ImageTags', {}).get('Primary'):
+                    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+
+                result = {
+                    'id': item_id,
+                    'name': item.get('Name'),
+                    'type': item_type,
+                    'year': item.get('ProductionYear'),
+                    'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
+                    'image': image_url,
+                }
+
+                if item_type == 'Series':
+                    result['is_series'] = True
+
+                items.append(result)
+
+            return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch recent media: {e}")
+
+
+@app.get("/search")
+async def search_media(q: str = Query("", description="Search query")):
+    """Search Jellyfin media library"""
+    if not q:
+        return {"items": []}
+
+    # Search Jellyfin Items API - only Series and Movies (episodes via expand)
+    url = f"{settings.jellyfin_url}/Items?searchTerm={urllib.parse.quote(q)}&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
+
+    try:
+        with urllib.request.urlopen(url, timeout=10.0) as response:
+            data = json.loads(response.read())
+            print(f"DEBUG: Jellyfin search returned {data.get('TotalRecordCount', 0)} items")
+
+            # Simplify response for frontend
+            items = []
+            for item in data.get('Items', []):
+                item_id = item.get('Id')
+                item_type = item.get('Type')
+
+                # Build image URL if item has primary image
+                image_url = None
+                if item.get('ImageTags', {}).get('Primary'):
+                    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+
+                result = {
+                    'id': item_id,
+                    'name': item.get('Name'),
+                    'type': item_type,
+                    'year': item.get('ProductionYear'),
+                    'overview': item.get('Overview', '')[:200] if item.get('Overview') else '',
+                    'image': image_url,
+                }
+
+                # Add episode-specific info
+                if item_type == 'Episode':
+                    result['series'] = item.get('SeriesName')
+                    result['season'] = item.get('ParentIndexNumber')
+                    result['episode'] = item.get('IndexNumber')
+                elif item_type == 'Series':
+                    # For series, we want to fetch episodes
+                    result['is_series'] = True
+
+                items.append(result)
+
+            print(f"DEBUG: Returning {len(items)} items to frontend")
+            return {"items": items}
+    except Exception as e:
+        print(f"DEBUG: Search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {e}")
 
 
 async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[int], mode: str):
