@@ -3,6 +3,8 @@
 [![Docker Build](https://github.com/HcgRandon/jellyfin-vrc-stream/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/HcgRandon/jellyfin-vrc-stream/actions/workflows/docker-publish.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> **Note:** Almost all of this repo was vibe-coded to get a quick working POC. Terminology and comments might be weird and nonsensical, but it is functional. I plan to clean this up properly later.
+
 A simple FastAPI proxy service that:
 - **Streams once from Jellyfin** - Single transcoding session regardless of viewer count
 - **Fans out to multiple clients** - All viewers watch the same stream
