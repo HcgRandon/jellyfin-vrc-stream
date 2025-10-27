@@ -14,7 +14,7 @@ A simple FastAPI proxy service that:
 
 1. Client requests: `GET /media.m3u8?m={media_id}`
 2. Proxy fetches HLS stream from Jellyfin
-3. Proxy caches playlist and segments in memory
+3. Proxy caches playlist and segments to disk
 4. All clients read from the same cached files
 5. Jellyfin only transcodes once, regardless of viewer count
 
@@ -23,7 +23,7 @@ A simple FastAPI proxy service that:
 - ✅ **Single transcode** - One Jellyfin session serves unlimited viewers
 - ✅ **Hidden credentials** - API key stays server-side
 - ✅ **Automatic stream selection** - Prefers Japanese audio + English subs
-- ✅ **Memory-backed cache** - Fast delivery, SSD-friendly
+- ✅ **Cached delivery** - Fast segment serving from local cache
 - ✅ **Simple** - No custom transcoding, just proxying Jellyfin
 
 ## API Endpoints
@@ -194,12 +194,12 @@ The proxy automatically manages cache to prevent OOM:
 1. **Idle Stream Cleanup**
    - Streams not accessed for `STREAM_IDLE_TIMEOUT` seconds are removed
    - Default: 5 minutes (300s)
-   - Cached files deleted, memory freed
+   - Cached files deleted, resources freed
 
 2. **Size-Based Cleanup**
    - When cache exceeds `MAX_CACHE_SIZE_MB`, oldest streams are removed
    - Cleans down to 80% of limit to avoid thrashing
-   - Default limit: 1.8 GB (leaves 200MB buffer from 2GB tmpfs)
+   - Default limit: 1.8 GB
 
 3. **Background Task**
    - Runs every `CLEANUP_INTERVAL` seconds (default: 60s)
