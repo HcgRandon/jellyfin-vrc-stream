@@ -504,6 +504,7 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'MaxWidth': str(settings.max_width),
             'MaxHeight': str(settings.max_height),
             'MaxFramerate': str(settings.max_framerate),
+            'MaxAudioChannels': '2',  # Force stereo for compatibility
             'Profile': settings.h264_profile,
             'Level': settings.h264_level,
             'MaxRefFrames': str(settings.max_ref_frames),
