@@ -11,6 +11,10 @@ data:
   MAX_STREAMING_BITRATE: "50000000"  # 50 Mbps
   MAX_WIDTH: "1920"
   MAX_HEIGHT: "1080"
+  MAX_FRAMERATE: "60"
+  H264_PROFILE: "high"
+  H264_LEVEL: "41"
+  MAX_REF_FRAMES: "4"
 ---
 apiVersion: v1
 kind: Secret
@@ -98,6 +102,26 @@ spec:
             configMapKeyRef:
               name: jellyfin-vrc-stream-config
               key: MAX_HEIGHT
+        - name: MAX_FRAMERATE
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: MAX_FRAMERATE
+        - name: H264_PROFILE
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: H264_PROFILE
+        - name: H264_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: H264_LEVEL
+        - name: MAX_REF_FRAMES
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: MAX_REF_FRAMES
         volumeMounts:
         - name: hls-cache
           mountPath: /tmp/hls-cache

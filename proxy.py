@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     max_streaming_bitrate: int = 50000000  # 50 Mbps total cap
     max_width: int = 1920  # Max resolution width
     max_height: int = 1080  # Max resolution height
+    max_framerate: int = 60  # Max framerate
+
+    # Encoding quality settings for better motion handling
+    h264_profile: str = "high"   # baseline/main/high - high = better quality
+    h264_level: str = "41"       # H.264 level (41 = 4.1, supports 1080p30, 42 = 4.2 supports 1080p60)
+    max_ref_frames: int = 4      # More reference frames = better quality motion, but higher CPU (1-16)
 
     class Config:
         env_file = ".env"
@@ -484,6 +490,10 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'MaxStreamingBitrate': str(settings.max_streaming_bitrate),
             'MaxWidth': str(settings.max_width),
             'MaxHeight': str(settings.max_height),
+            'MaxFramerate': str(settings.max_framerate),
+            'Profile': settings.h264_profile,
+            'Level': settings.h264_level,
+            'MaxRefFrames': str(settings.max_ref_frames),
             'SegmentContainer': 'ts',
             'MinSegments': '2',
         }

@@ -114,6 +114,10 @@ Stop and cleanup a specific stream by its stream_key (from `/streams` endpoint).
 | `MAX_STREAMING_BITRATE` | Total bitrate cap in bits/sec | `50000000` (50 Mbps) |
 | `MAX_WIDTH` | Maximum video width | `1920` |
 | `MAX_HEIGHT` | Maximum video height | `1080` |
+| `MAX_FRAMERATE` | Maximum framerate | `60` |
+| `H264_PROFILE` | H.264 profile (baseline/main/high) | `high` |
+| `H264_LEVEL` | H.264 level (41=1080p30, 42=1080p60) | `41` |
+| `MAX_REF_FRAMES` | Reference frames for motion quality | `4` |
 
 ## Deployment
 
