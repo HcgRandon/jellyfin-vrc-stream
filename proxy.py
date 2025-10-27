@@ -7,6 +7,9 @@ Simple Jellyfin HLS Proxy for VRChat
 """
 
 import re
+import time
+import shutil
+import asyncio
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -20,6 +23,9 @@ class Settings(BaseSettings):
     jellyfin_url: str = "http://jellyfin:8096"
     jellyfin_api_key: str = ""
     cache_dir: str = "/tmp/hls-cache"
+    stream_idle_timeout: int = 300  # 5 minutes
+    cleanup_interval: int = 60  # Check every 60 seconds
+    max_cache_size_mb: int = 1800  # 1.8 GB (leave 200MB buffer from 2GB limit)
 
     class Config:
         env_file = ".env"
@@ -35,6 +41,29 @@ Path(settings.cache_dir).mkdir(parents=True, exist_ok=True)
 active_streams = {}
 
 
+async def cleanup_task():
+    """Background task to cleanup idle streams"""
+    while True:
+        try:
+            await asyncio.sleep(settings.cleanup_interval)
+            removed_idle = cleanup_idle_streams()
+            removed_size = cleanup_by_size()
+            if removed_idle > 0 or removed_size > 0:
+                print(f"Cleanup: removed {removed_idle} idle stream(s), {removed_size} stream(s) due to size")
+        except Exception as e:
+            print(f"Error in cleanup task: {e}")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background cleanup task"""
+    if settings.cleanup_interval > 0:
+        asyncio.create_task(cleanup_task())
+        print(f"Started cleanup task (interval: {settings.cleanup_interval}s, idle timeout: {settings.stream_idle_timeout}s, max cache: {settings.max_cache_size_mb}MB)")
+    else:
+        print("Cleanup task disabled (cleanup_interval=0)")
+
+
 def get_item_info(item_id: str):
     """Fetch item info from Jellyfin"""
     url = f"{settings.jellyfin_url}/Items/{item_id}?api_key={settings.jellyfin_api_key}"
@@ -44,6 +73,88 @@ def get_item_info(item_id: str):
             return json.loads(response.read())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch item: {e}")
+
+
+def get_cache_size_mb():
+    """Get total cache size in MB"""
+    total_size = 0
+    cache_path = Path(settings.cache_dir)
+    if cache_path.exists():
+        for item in cache_path.rglob('*'):
+            if item.is_file():
+                total_size += item.stat().st_size
+    return total_size / (1024 * 1024)
+
+
+def cleanup_idle_streams():
+    """Remove idle streams and their cached files"""
+    # Skip if disabled (0 or negative value)
+    if settings.stream_idle_timeout <= 0:
+        return 0
+
+    current_time = time.time()
+    streams_to_remove = []
+
+    for stream_key, info in active_streams.items():
+        idle_time = current_time - info.get('last_accessed', current_time)
+        if idle_time > settings.stream_idle_timeout:
+            streams_to_remove.append(stream_key)
+
+    for stream_key in streams_to_remove:
+        # Delete cached files
+        cache_path = Path(settings.cache_dir) / stream_key
+        if cache_path.exists():
+            try:
+                shutil.rmtree(cache_path)
+                print(f"Cleaned up cache for idle stream: {stream_key}")
+            except Exception as e:
+                print(f"Error cleaning up cache for {stream_key}: {e}")
+
+        # Remove from active streams
+        del active_streams[stream_key]
+        print(f"Removed idle stream: {stream_key}")
+
+    return len(streams_to_remove)
+
+
+def cleanup_by_size():
+    """Remove oldest streams if cache is too large"""
+    # Skip if disabled (0 or negative value)
+    if settings.max_cache_size_mb <= 0:
+        return 0
+
+    cache_size_mb = get_cache_size_mb()
+
+    if cache_size_mb < settings.max_cache_size_mb:
+        return 0
+
+    print(f"Cache size ({cache_size_mb:.1f} MB) exceeds limit ({settings.max_cache_size_mb} MB), cleaning up...")
+
+    # Sort streams by last access time (oldest first)
+    sorted_streams = sorted(
+        active_streams.items(),
+        key=lambda x: x[1].get('last_accessed', 0)
+    )
+
+    removed = 0
+    for stream_key, info in sorted_streams:
+        if get_cache_size_mb() < settings.max_cache_size_mb * 0.8:  # Clean to 80% of limit
+            break
+
+        # Delete cached files
+        cache_path = Path(settings.cache_dir) / stream_key
+        if cache_path.exists():
+            try:
+                shutil.rmtree(cache_path)
+                print(f"Cleaned up cache for stream (size limit): {stream_key}")
+            except Exception as e:
+                print(f"Error cleaning up cache for {stream_key}: {e}")
+
+        # Remove from active streams
+        del active_streams[stream_key]
+        removed += 1
+
+    return removed
 
 
 def find_best_streams(item_info):
@@ -140,7 +251,9 @@ def rewrite_playlist_live(content: bytes, media_id: str) -> str:
 async def root():
     return {
         "service": "Jellyfin HLS Proxy",
-        "active_streams": len(active_streams)
+        "active_streams": len(active_streams),
+        "cache_size_mb": round(get_cache_size_mb(), 2),
+        "cache_limit_mb": settings.max_cache_size_mb
     }
 
 
@@ -192,7 +305,12 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'audio': audio,
             'subtitle': subtitle,
             'mode': mode,
+            'last_accessed': time.time(),
+            'created_at': time.time(),
         }
+
+    # Update last accessed time
+    active_streams[stream_key]['last_accessed'] = time.time()
 
     jellyfin_url = active_streams[stream_key]['jellyfin_url']
 
@@ -257,6 +375,9 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
     if not stream_key or 'session_id' not in active_streams[stream_key]:
         raise HTTPException(status_code=404, detail="Stream not found or not initialized")
 
+    # Update last accessed time
+    active_streams[stream_key]['last_accessed'] = time.time()
+
     session_id = active_streams[stream_key]['session_id']
     hls_dir = active_streams[stream_key].get('hls_dir', 'hls1')
 
@@ -300,6 +421,9 @@ async def get_live_segment(media_id: str, segment_file: str):
     if not stream_key or 'session_id' not in active_streams[stream_key]:
         raise HTTPException(status_code=404, detail="Stream not found or not initialized")
 
+    # Update last accessed time
+    active_streams[stream_key]['last_accessed'] = time.time()
+
     session_id = active_streams[stream_key]['session_id']
     hls_dir = active_streams[stream_key].get('hls_dir', 'hls1')
     cache_path = Path(settings.cache_dir) / stream_key / segment_file
@@ -325,15 +449,53 @@ async def get_live_segment(media_id: str, segment_file: str):
 @app.get("/streams")
 async def list_streams():
     """List active streams"""
+    current_time = time.time()
     return {
         "streams": [
             {
+                "stream_key": key,
                 "media_id": info['media_id'],
                 "audio": info.get('audio'),
                 "subtitle": info.get('subtitle'),
+                "mode": info.get('mode'),
+                "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
+                "age_seconds": int(current_time - info.get('created_at', current_time)),
             }
             for key, info in active_streams.items()
-        ]
+        ],
+        "cache_size_mb": round(get_cache_size_mb(), 2)
+    }
+
+
+@app.delete("/streams/{stream_key}")
+async def delete_stream(stream_key: str):
+    """Manually stop and cleanup a stream"""
+    if stream_key not in active_streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    # Delete cached files
+    cache_path = Path(settings.cache_dir) / stream_key
+    if cache_path.exists():
+        try:
+            shutil.rmtree(cache_path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete cache: {e}")
+
+    # Remove from active streams
+    del active_streams[stream_key]
+
+    return {"status": "deleted", "stream_key": stream_key}
+
+
+@app.post("/cleanup")
+async def manual_cleanup():
+    """Manually trigger cleanup"""
+    removed_idle = cleanup_idle_streams()
+    removed_size = cleanup_by_size()
+    return {
+        "removed_idle": removed_idle,
+        "removed_size": removed_size,
+        "cache_size_mb": round(get_cache_size_mb(), 2)
     }
 
 

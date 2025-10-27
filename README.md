@@ -78,7 +78,23 @@ Automatically served after playlist request.
 GET /streams
 ```
 
-Returns list of currently active/cached streams.
+Returns list of currently active/cached streams with timing information.
+
+### Management Endpoints
+
+**Manual Cleanup:**
+```
+POST /cleanup
+```
+
+Manually trigger cleanup (idle streams + size-based cleanup).
+
+**Delete Specific Stream:**
+```
+DELETE /streams/{stream_key}
+```
+
+Stop and cleanup a specific stream by its stream_key (from `/streams` endpoint).
 
 ## Configuration
 
@@ -87,6 +103,9 @@ Returns list of currently active/cached streams.
 | `JELLYFIN_URL` | Jellyfin server URL | `http://jellyfin:8096` |
 | `JELLYFIN_API_KEY` | Jellyfin API key | (required) |
 | `CACHE_DIR` | HLS cache directory | `/tmp/hls-cache` |
+| `STREAM_IDLE_TIMEOUT` | Cleanup streams idle for N seconds (0=disable) | `300` (5 min) |
+| `CLEANUP_INTERVAL` | Run cleanup every N seconds (0=disable) | `60` |
+| `MAX_CACHE_SIZE_MB` | Max cache size in MB (0=disable) | `1800` (1.8 GB) |
 
 ## Deployment
 
@@ -165,3 +184,27 @@ http://proxy:8000/live.m3u8?m=<media_id>
 - First viewer triggers Jellyfin transcoding
 - Additional viewers join immediately from cache
 - Subtitles are burned into video by Jellyfin
+
+## Cleanup & Resource Management
+
+The proxy automatically manages cache to prevent OOM:
+
+1. **Idle Stream Cleanup**
+   - Streams not accessed for `STREAM_IDLE_TIMEOUT` seconds are removed
+   - Default: 5 minutes (300s)
+   - Cached files deleted, memory freed
+
+2. **Size-Based Cleanup**
+   - When cache exceeds `MAX_CACHE_SIZE_MB`, oldest streams are removed
+   - Cleans down to 80% of limit to avoid thrashing
+   - Default limit: 1.8 GB (leaves 200MB buffer from 2GB tmpfs)
+
+3. **Background Task**
+   - Runs every `CLEANUP_INTERVAL` seconds (default: 60s)
+   - Performs both idle and size-based cleanup
+   - Can be disabled by setting `CLEANUP_INTERVAL=0`
+
+4. **Manual Management**
+   - `POST /cleanup` - Trigger cleanup immediately
+   - `DELETE /streams/{key}` - Stop specific stream
+   - `GET /streams` - Monitor idle times and cache size
