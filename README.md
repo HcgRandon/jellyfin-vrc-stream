@@ -108,6 +108,12 @@ Stop and cleanup a specific stream by its stream_key (from `/streams` endpoint).
 | `STREAM_IDLE_TIMEOUT` | Cleanup streams idle for N seconds (0=disable) | `300` (5 min) |
 | `CLEANUP_INTERVAL` | Run cleanup every N seconds (0=disable) | `60` |
 | `MAX_CACHE_SIZE_MB` | Max cache size in MB (0=disable) | `1800` (1.8 GB) |
+| **Quality Settings** | | |
+| `VIDEO_BITRATE` | Video bitrate in bits/sec | `40000000` (40 Mbps) |
+| `AUDIO_BITRATE` | Audio bitrate in bits/sec | `320000` (320 Kbps) |
+| `MAX_STREAMING_BITRATE` | Total bitrate cap in bits/sec | `50000000` (50 Mbps) |
+| `MAX_WIDTH` | Maximum video width | `1920` |
+| `MAX_HEIGHT` | Maximum video height | `1080` |
 
 ## Deployment
 
@@ -186,6 +192,8 @@ http://proxy:8000/live.m3u8?m=<media_id>
 - First viewer triggers Jellyfin transcoding
 - Additional viewers join immediately from cache
 - Subtitles are burned into video by Jellyfin
+- **Quality defaults are optimized for high-quality single-stream fan-out** (40 Mbps video, 320 Kbps audio)
+- Lower quality settings if bandwidth/storage is limited by adjusting env vars
 
 ## Cleanup & Resource Management
 

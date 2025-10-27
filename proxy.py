@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     cleanup_interval: int = 60  # Check every 60 seconds
     max_cache_size_mb: int = 1800  # 1.8 GB (leave 200MB buffer from 2GB limit)
 
+    # Quality settings - defaults optimized for high quality single-stream
+    video_bitrate: int = 40000000  # 40 Mbps for very high quality
+    audio_bitrate: int = 320000    # 320 Kbps for high quality audio
+    max_streaming_bitrate: int = 50000000  # 50 Mbps total cap
+    max_width: int = 1920  # Max resolution width
+    max_height: int = 1080  # Max resolution height
+
     class Config:
         env_file = ".env"
 
@@ -472,8 +479,11 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'DeviceId': 'jellyfin-proxy',
             'VideoCodec': 'h264',
             'AudioCodec': 'aac',
-            'VideoBitrate': '2500000',
-            'AudioBitrate': '128000',
+            'VideoBitrate': str(settings.video_bitrate),
+            'AudioBitrate': str(settings.audio_bitrate),
+            'MaxStreamingBitrate': str(settings.max_streaming_bitrate),
+            'MaxWidth': str(settings.max_width),
+            'MaxHeight': str(settings.max_height),
             'SegmentContainer': 'ts',
             'MinSegments': '2',
         }
