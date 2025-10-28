@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     jellyfin_api_key: str = ""
     cache_dir: str = "/tmp/hls-cache"
     stream_idle_timeout: int = 300  # 5 minutes
+    locked_stream_idle_timeout: int = 86400  # 24 hours for locked streams
     cleanup_interval: int = 60  # Check every 60 seconds
-    max_cache_size_mb: int = 1800  # 1.8 GB (leave 200MB buffer from 2GB limit)
+    max_cache_size_mb: int = 0  # Disabled by default (0 = no size-based cleanup)
 
     # Quality settings - defaults optimized for high quality single-stream
     video_bitrate: int = 40000000  # 40 Mbps for very high quality
@@ -61,6 +62,46 @@ if static_dir.exists():
 # Track active streams
 active_streams = {}
 
+# Track pre-warm operations
+prewarm_operations = {}
+
+# Lock persistence file
+LOCK_FILE = Path(settings.cache_dir) / ".stream_locks.json"
+
+# Startup recovery lock - prevents requests until recovery is complete
+startup_complete = asyncio.Event()
+
+
+def load_stream_locks():
+    """Load locked stream keys from persistent storage"""
+    if not LOCK_FILE.exists():
+        return set()
+    try:
+        with open(LOCK_FILE, 'r') as f:
+            data = json.load(f)
+            return set(data.get('locked_streams', []))
+    except Exception as e:
+        print(f"Error loading stream locks: {e}")
+        return set()
+
+
+def save_stream_locks(locked_streams: set):
+    """Save locked stream keys to persistent storage"""
+    try:
+        with open(LOCK_FILE, 'w') as f:
+            json.dump({'locked_streams': list(locked_streams)}, f)
+    except Exception as e:
+        print(f"Error saving stream locks: {e}")
+
+
+def get_locked_streams():
+    """Get set of currently locked stream keys"""
+    locked = set()
+    for key, info in active_streams.items():
+        if info.get('locked', False):
+            locked.add(key)
+    return locked
+
 
 async def cleanup_task():
     """Background task to cleanup idle streams"""
@@ -77,10 +118,30 @@ async def cleanup_task():
 
 @app.on_event("startup")
 async def startup_event():
-    """Start background cleanup task"""
+    """Start background cleanup task and recover cached streams"""
+    # Load locked streams from persistent storage
+    locked_streams = load_stream_locks()
+    if locked_streams:
+        print(f"Loaded {len(locked_streams)} locked stream(s) from storage")
+
+    # Try to recover streams from existing cache directories
+    recovered = recover_cached_streams()
+    if recovered > 0:
+        print(f"Recovered {recovered} cached stream(s) from previous session")
+
+    # Apply lock status to recovered streams
+    for stream_key in locked_streams:
+        if stream_key in active_streams:
+            active_streams[stream_key]['locked'] = True
+            print(f"Restored lock status for stream: {stream_key}")
+
+    # Signal that startup/recovery is complete - clients can now make requests
+    startup_complete.set()
+    print("Startup complete - ready to accept requests")
+
     if settings.cleanup_interval > 0:
         asyncio.create_task(cleanup_task())
-        print(f"Started cleanup task (interval: {settings.cleanup_interval}s, idle timeout: {settings.stream_idle_timeout}s, max cache: {settings.max_cache_size_mb}MB)")
+        print(f"Started cleanup task (interval: {settings.cleanup_interval}s, idle timeout: {settings.stream_idle_timeout}s, locked timeout: {settings.locked_stream_idle_timeout}s, max cache: {settings.max_cache_size_mb}MB)")
     else:
         print("Cleanup task disabled (cleanup_interval=0)")
 
@@ -107,8 +168,19 @@ def get_cache_size_mb():
     return total_size / (1024 * 1024)
 
 
+def get_stream_cache_size_mb(stream_key: str):
+    """Get cache size for a specific stream in MB"""
+    total_size = 0
+    cache_path = Path(settings.cache_dir) / stream_key
+    if cache_path.exists():
+        for item in cache_path.rglob('*'):
+            if item.is_file():
+                total_size += item.stat().st_size
+    return total_size / (1024 * 1024)
+
+
 def cleanup_idle_streams():
-    """Remove idle streams and their cached files"""
+    """Remove idle streams and their cached files (respects locked streams)"""
     # Skip if disabled (0 or negative value)
     if settings.stream_idle_timeout <= 0:
         return 0
@@ -118,7 +190,12 @@ def cleanup_idle_streams():
 
     for stream_key, info in active_streams.items():
         idle_time = current_time - info.get('last_accessed', current_time)
-        if idle_time > settings.stream_idle_timeout:
+        is_locked = info.get('locked', False)
+
+        # Use different timeout for locked vs unlocked streams
+        timeout = settings.locked_stream_idle_timeout if is_locked else settings.stream_idle_timeout
+
+        if idle_time > timeout:
             streams_to_remove.append(stream_key)
 
     for stream_key in streams_to_remove:
@@ -139,7 +216,7 @@ def cleanup_idle_streams():
 
 
 def cleanup_by_size():
-    """Remove oldest streams if cache is too large"""
+    """Remove oldest streams if cache is too large (skips locked streams)"""
     # Skip if disabled (0 or negative value)
     if settings.max_cache_size_mb <= 0:
         return 0
@@ -151,9 +228,9 @@ def cleanup_by_size():
 
     print(f"Cache size ({cache_size_mb:.1f} MB) exceeds limit ({settings.max_cache_size_mb} MB), cleaning up...")
 
-    # Sort streams by last access time (oldest first)
+    # Sort streams by last access time (oldest first), excluding locked streams
     sorted_streams = sorted(
-        active_streams.items(),
+        [(k, v) for k, v in active_streams.items() if not v.get('locked', False)],
         key=lambda x: x[1].get('last_accessed', 0)
     )
 
@@ -174,6 +251,82 @@ def cleanup_by_size():
         # Remove from active streams
         del active_streams[stream_key]
         removed += 1
+
+    return removed
+
+
+def recover_cached_streams():
+    """Try to recover stream entries from existing cache directories at startup"""
+    cache_dir = Path(settings.cache_dir)
+    if not cache_dir.exists():
+        return 0
+
+    recovered = 0
+
+    # Iterate through cache directories
+    for item in cache_dir.iterdir():
+        if item.is_dir():
+            stream_key = item.name
+
+            # Skip if already in active_streams
+            if stream_key in active_streams:
+                continue
+
+            # Parse stream_key format: {media_id}_{audio}_{subtitle}_{mode}
+            parts = stream_key.rsplit('_', 3)
+            if len(parts) != 4:
+                print(f"Skipping invalid stream_key format: {stream_key}")
+                continue
+
+            media_id, audio_str, subtitle_str, mode = parts
+
+            # Parse audio/subtitle (None if 'None')
+            audio = int(audio_str) if audio_str != 'None' else None
+            subtitle = int(subtitle_str) if subtitle_str != 'None' else None
+
+            # Validate mode
+            if mode not in ['vod', 'live']:
+                print(f"Skipping invalid mode: {stream_key}")
+                continue
+
+            # Create minimal stream entry - will be fully initialized on first access
+            active_streams[stream_key] = {
+                'media_id': media_id,
+                'audio': audio,
+                'subtitle': subtitle,
+                'mode': mode,
+                'created_at': time.time(),
+                'last_accessed': time.time(),
+                'recovered': True  # Flag to indicate this was recovered from cache
+            }
+
+            print(f"Recovered cached stream: {stream_key}")
+            recovered += 1
+
+    return recovered
+
+
+def cleanup_orphaned_cache():
+    """Remove cache directories that don't correspond to any active stream"""
+    cache_dir = Path(settings.cache_dir)
+    if not cache_dir.exists():
+        return 0
+
+    removed = 0
+    active_keys = set(active_streams.keys())
+
+    # Iterate through cache directories
+    for item in cache_dir.iterdir():
+        if item.is_dir():
+            stream_key = item.name
+            # If this stream_key is not in active_streams, it's orphaned
+            if stream_key not in active_keys:
+                try:
+                    shutil.rmtree(item)
+                    print(f"Cleaned up orphaned cache directory: {stream_key}")
+                    removed += 1
+                except Exception as e:
+                    print(f"Error cleaning up orphaned cache {stream_key}: {e}")
 
     return removed
 
@@ -244,18 +397,38 @@ async def fetch_and_cache(url: str, cache_path: Path, timeout: float = 60.0) -> 
 
 
 def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
-    """Rewrite VOD playlist URLs - preserves query params"""
+    """Rewrite VOD playlist URLs - preserves query params but strips api_key for security"""
     text = content.decode('utf-8')
     lines = text.split('\n')
     new_lines = []
 
+    def strip_api_key(url: str) -> str:
+        """Remove api_key from URL to avoid exposing it to clients"""
+        if '?' not in url:
+            return url
+        path, query = url.split('?', 1)
+        params = [p for p in query.split('&') if not p.startswith('api_key=')]
+        if params:
+            return f"{path}?{'&'.join(params)}"
+        return path
+
     for line in lines:
         if line and not line.startswith('#'):
-            # VOD segments have query params we need to preserve
+            # Rewrite .m3u8 playlist references, stripping hls*/session/ prefix like we do for .ts
+            # Format: hls1/main/playlist.m3u8?query -> playlist.m3u8?query
+            m3u8_match = re.search(r'(?:hls\d*/[^/]+/)?(.+\.m3u8.*)', line)
+            if m3u8_match and '.m3u8' in line:
+                playlist_path = m3u8_match.group(1)  # Strip hls*/session/ prefix
+                playlist_path = strip_api_key(playlist_path)  # Strip api_key
+                new_lines.append(f"/vod/{media_id}/{playlist_path}")
+                continue
+
+            # VOD segments have query params we need to preserve (but not api_key)
             # Format: hls1/main/0.ts?mediaSourceId=...&runtimeTicks=...
-            match = re.search(r'hls\d*/[^/]+/(.+\.ts.*)', line)
-            if match:
-                segment_path = match.group(1)  # Includes query params
+            ts_match = re.search(r'hls\d*/[^/]+/(.+\.ts.*)', line)
+            if ts_match:
+                segment_path = ts_match.group(1)  # Includes query params, strips hls*/session/ prefix
+                segment_path = strip_api_key(segment_path)  # Strip api_key
                 new_lines.append(f"/vod/{media_id}/{segment_path}")
                 continue
         new_lines.append(line)
@@ -263,8 +436,8 @@ def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
     return '\n'.join(new_lines)
 
 
-def rewrite_playlist_live(content: bytes, media_id: str) -> str:
-    """Rewrite live playlist URLs - simple segments"""
+def rewrite_playlist_live(content: bytes, stream_key: str) -> str:
+    """Rewrite live playlist URLs - use stream_key to distinguish different audio/subtitle combos"""
     text = content.decode('utf-8')
     lines = text.split('\n')
     new_lines = []
@@ -275,7 +448,7 @@ def rewrite_playlist_live(content: bytes, media_id: str) -> str:
             match = re.search(r'hls\d*/[^/]+/([^/?]+\.ts)', line)
             if match:
                 segment_file = match.group(1)
-                new_lines.append(f"/live/{media_id}/{segment_file}")
+                new_lines.append(f"/live/{stream_key}/{segment_file}")
                 continue
         new_lines.append(line)
 
@@ -438,7 +611,6 @@ async def search_media(q: str = Query("", description="Search query")):
                 return json.loads(response.read())
 
         data = await asyncio.to_thread(fetch)
-        print(f"DEBUG: Jellyfin search returned {data.get('TotalRecordCount', 0)} items")
 
         # Simplify response for frontend
         items = []
@@ -471,18 +643,24 @@ async def search_media(q: str = Query("", description="Search query")):
 
             items.append(result)
 
-        print(f"DEBUG: Returning {len(items)} items to frontend")
         return {"items": items}
     except Exception as e:
-        print(f"DEBUG: Search error: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {e}")
 
 
 async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[int], mode: str):
     """Common playlist logic for both VOD and live modes"""
+    # Wait for startup/recovery to complete
+    await startup_complete.wait()
+
     stream_key = f"{m}_{audio}_{subtitle}_{mode}"
 
-    if stream_key not in active_streams:
+    # Check if stream needs initialization (new or recovered from cache)
+    needs_init = (stream_key not in active_streams or
+                  active_streams[stream_key].get('recovered', False) or
+                  'jellyfin_url' not in active_streams[stream_key])
+
+    if needs_init:
         item_info = get_item_info(m)
 
         if audio is None or subtitle is None:
@@ -492,10 +670,14 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             if subtitle is None:
                 subtitle = auto_sub
 
+        # Use a unique DeviceId that includes subtitle info to break Jellyfin's cache
+        # This ensures we get a fresh transcode with subtitles
+        device_suffix = f"-a{audio}-s{subtitle}" if subtitle is not None else f"-a{audio}"
+
         params = {
             'mediaSourceId': m,
             'api_key': settings.jellyfin_api_key,
-            'DeviceId': 'jellyfin-proxy',
+            'DeviceId': f'jellyfin-proxy{device_suffix}',
             'VideoCodec': 'h264',
             'AudioCodec': 'aac',
             'VideoBitrate': str(settings.video_bitrate),
@@ -536,20 +718,27 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
 
-    jellyfin_url = active_streams[stream_key]['jellyfin_url']
+    # Check if playlist is already cached (from prewarm or previous request)
+    if 'playlist_content' in active_streams[stream_key]:
+        content = active_streams[stream_key]['playlist_content']
+    else:
+        # Fetch from Jellyfin only if not cached
+        jellyfin_url = active_streams[stream_key]['jellyfin_url']
 
-    try:
-        # Run blocking urllib call in thread pool to avoid blocking event loop
-        def fetch_playlist():
-            with urllib.request.urlopen(jellyfin_url, timeout=60.0) as response:
-                return response.read()
+        try:
+            # Run blocking urllib call in thread pool to avoid blocking event loop
+            def fetch_playlist():
+                with urllib.request.urlopen(jellyfin_url, timeout=60.0) as response:
+                    return response.read()
 
-        content = await asyncio.to_thread(fetch_playlist)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch playlist: {e}")
+            content = await asyncio.to_thread(fetch_playlist)
+            # Cache the playlist content to avoid creating multiple Jellyfin sessions
+            active_streams[stream_key]['playlist_content'] = content
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch playlist: {e}")
 
-    # Store session info
-    if content:
+    # Store session info (but don't overwrite if already set by prewarm!)
+    if content and 'session_id' not in active_streams[stream_key]:
         match = re.search(rb'(hls\d*)/([^/]+)/', content)
         if match:
             hls_dir = match.group(1).decode('utf-8')
@@ -561,7 +750,7 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
     if mode == "vod":
         rewritten = rewrite_playlist_vod(content, m)
     else:
-        rewritten = rewrite_playlist_live(content, m)
+        rewritten = rewrite_playlist_live(content, stream_key)
 
     return PlainTextResponse(
         rewritten,
@@ -570,7 +759,7 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
     )
 
 
-@app.get("/media.m3u8")
+@app.get("/vod.m3u8")
 async def get_vod_playlist(
     m: str = Query(..., description="Media ID"),
     audio: Optional[int] = Query(None, description="Audio stream index"),
@@ -593,15 +782,32 @@ async def get_live_playlist(
 @app.get("/vod/{media_id}/{segment_path:path}")
 async def get_vod_segment(media_id: str, segment_path: str, request: Request):
     """Get VOD segment with query params preserved"""
+    # Wait for startup/recovery to complete
+    await startup_complete.wait()
+
+    # Parse audio/subtitle from query params to find the correct stream
+    query_params = dict(request.query_params)
+    req_audio = query_params.get('AudioStreamIndex')
+    req_subtitle = query_params.get('SubtitleStreamIndex')
+
+    # Convert to int or None to match stream info
+    req_audio = int(req_audio) if req_audio else None
+    req_subtitle = int(req_subtitle) if req_subtitle else None
 
     stream_key = None
     for key, info in active_streams.items():
-        if info['media_id'] == media_id and info.get('mode') == 'vod':
+        if (info['media_id'] == media_id and
+            info.get('mode') == 'vod' and
+            info.get('audio') == req_audio and
+            info.get('subtitle') == req_subtitle):
             stream_key = key
             break
 
-    if not stream_key or 'session_id' not in active_streams[stream_key]:
-        raise HTTPException(status_code=404, detail="Stream not found or not initialized")
+    if not stream_key:
+        raise HTTPException(status_code=404, detail=f"Stream not found: media_id={media_id}, audio={req_audio}, subtitle={req_subtitle}")
+
+    if 'session_id' not in active_streams[stream_key]:
+        raise HTTPException(status_code=404, detail="Stream found but not initialized (no session_id)")
 
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
@@ -611,6 +817,39 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
 
     # Extract segment filename for cache key (without query params)
     segment_file = segment_path.split('?')[0]
+
+    # Check if this is a nested playlist or a segment
+    is_playlist = segment_file.endswith('.m3u8')
+
+    # Build Jellyfin URL preserving query params and adding api_key back
+    query_string = request.url.query
+    if query_string:
+        # Add api_key to the query string if not already present
+        if 'api_key=' not in query_string:
+            query_string = f"api_key={settings.jellyfin_api_key}&{query_string}"
+        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}?{query_string}"
+    else:
+        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}?api_key={settings.jellyfin_api_key}"
+
+    # For playlists, fetch and rewrite (don't cache - always fetch fresh)
+    if is_playlist:
+        try:
+            def fetch_playlist():
+                with urllib.request.urlopen(segment_url, timeout=60.0) as response:
+                    return response.read()
+
+            content = await asyncio.to_thread(fetch_playlist)
+            rewritten = rewrite_playlist_vod(content, media_id)
+
+            return PlainTextResponse(
+                rewritten,
+                media_type="application/vnd.apple.mpegurl",
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch nested playlist: {e}")
+
+    # For segments, cache and serve
     cache_path = Path(settings.cache_dir) / stream_key / segment_file
 
     if cache_path.exists():
@@ -619,13 +858,6 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
             media_type="video/mp2t",
             headers={"Access-Control-Allow-Origin": "*"}
         )
-
-    # Build Jellyfin URL preserving query params
-    query_string = request.url.query
-    if query_string:
-        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}?{query_string}"
-    else:
-        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}"
 
     # Use longer timeout for first segment (transcoding startup)
     segment_num = segment_file.split('.')[0]
@@ -640,22 +872,19 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
     )
 
 
-@app.get("/live/{media_id}/{segment_file}")
-async def get_live_segment(media_id: str, segment_file: str):
-    """Get live segment - simple filename"""
+@app.get("/live/{stream_key}/{segment_file}")
+async def get_live_segment(stream_key: str, segment_file: str):
+    """Get live segment - use stream_key to distinguish different audio/subtitle combos"""
+    # Wait for startup/recovery to complete
+    await startup_complete.wait()
 
-    stream_key = None
-    for key, info in active_streams.items():
-        if info['media_id'] == media_id and info.get('mode') == 'live':
-            stream_key = key
-            break
-
-    if not stream_key or 'session_id' not in active_streams[stream_key]:
+    if stream_key not in active_streams or 'session_id' not in active_streams[stream_key]:
         raise HTTPException(status_code=404, detail="Stream not found or not initialized")
 
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
 
+    media_id = active_streams[stream_key]['media_id']
     session_id = active_streams[stream_key]['session_id']
     hls_dir = active_streams[stream_key].get('hls_dir', 'hls1')
     cache_path = Path(settings.cache_dir) / stream_key / segment_file
@@ -697,6 +926,8 @@ async def list_streams():
             "mode": info.get('mode'),
             "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
             "age_seconds": int(current_time - info.get('created_at', current_time)),
+            "cache_size_mb": round(get_stream_cache_size_mb(key), 2),
+            "locked": info.get('locked', False),
         }
 
         # Try to fetch media details
@@ -744,7 +975,338 @@ async def delete_stream(stream_key: str):
     # Remove from active streams
     del active_streams[stream_key]
 
+    # Update lock persistence if stream was locked
+    locked_streams = get_locked_streams()
+    save_stream_locks(locked_streams)
+
     return {"status": "deleted", "stream_key": stream_key}
+
+
+@app.post("/streams/{stream_key}/lock")
+async def lock_stream(stream_key: str):
+    """Lock a stream to prevent cleanup (24 hour idle timeout instead of 5 min)"""
+    if stream_key not in active_streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    # Set locked flag
+    active_streams[stream_key]['locked'] = True
+
+    # Persist to disk
+    locked_streams = get_locked_streams()
+    save_stream_locks(locked_streams)
+
+    return {"status": "locked", "stream_key": stream_key}
+
+
+@app.post("/streams/{stream_key}/unlock")
+async def unlock_stream(stream_key: str):
+    """Unlock a stream to allow normal cleanup (5 min idle timeout)"""
+    if stream_key not in active_streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    # Remove locked flag
+    active_streams[stream_key]['locked'] = False
+
+    # Persist to disk
+    locked_streams = get_locked_streams()
+    save_stream_locks(locked_streams)
+
+    return {"status": "unlocked", "stream_key": stream_key}
+
+
+@app.post("/prewarm/start")
+async def start_prewarm(
+    media_id: str,
+    audio: Optional[int] = None,
+    subtitle: Optional[int] = None,
+    mode: str = "vod"
+):
+    """Start pre-warming a stream by fetching segments in advance (VOD only)"""
+    import uuid
+
+    # Only allow pre-warming for VOD mode
+    if mode != "vod":
+        raise HTTPException(status_code=400, detail="Pre-warming is only supported for VOD mode")
+
+    # Generate unique prewarm ID
+    prewarm_id = str(uuid.uuid4())
+
+    # Initialize prewarm operation
+    prewarm_operations[prewarm_id] = {
+        "id": prewarm_id,
+        "media_id": media_id,
+        "audio": audio,
+        "subtitle": subtitle,
+        "mode": mode,
+        "status": "initializing",
+        "start_time": time.time(),
+        "segments_cached": 0,
+        "total_segments": 0,
+        "bytes_cached": 0,
+        "error": None,
+        "task": None
+    }
+
+    # Start async background task
+    task = asyncio.create_task(prewarm_worker(prewarm_id))
+    prewarm_operations[prewarm_id]["task"] = task
+
+    return {"prewarm_id": prewarm_id, "status": "started"}
+
+
+async def prewarm_worker(prewarm_id: str):
+    """Background worker that fetches all segments for a VOD stream"""
+    try:
+        op = prewarm_operations[prewarm_id]
+        media_id = op["media_id"]
+        audio = op["audio"]
+        subtitle = op["subtitle"]
+
+        # Initialize the stream first
+        op["status"] = "initializing"
+
+        # Start VOD stream
+        stream_key = f"{media_id}_{audio}_{subtitle}_vod"
+
+        # Check if already active
+        if stream_key in active_streams:
+            jellyfin_url = active_streams[stream_key]['jellyfin_url']
+        else:
+            # Initialize new stream
+            m = media_id
+            # Use a unique DeviceId that includes subtitle info to break Jellyfin's cache
+            # This ensures we get a fresh transcode with subtitles
+            device_suffix = f"-a{audio}-s{subtitle}" if subtitle is not None else f"-a{audio}"
+
+            params = {
+                'mediaSourceId': m,
+                'api_key': settings.jellyfin_api_key,
+                'DeviceId': f'jellyfin-proxy{device_suffix}',
+                'VideoCodec': 'h264',
+                'AudioCodec': 'aac',
+                'VideoBitrate': str(settings.video_bitrate),
+                'AudioBitrate': str(settings.audio_bitrate),
+                'MaxStreamingBitrate': str(settings.max_streaming_bitrate),
+                'MaxWidth': str(settings.max_width),
+                'MaxHeight': str(settings.max_height),
+                'MaxFramerate': str(settings.max_framerate),
+                'MaxAudioChannels': '2',
+                'Profile': settings.h264_profile,
+                'Level': settings.h264_level,
+                'MaxRefFrames': str(settings.max_ref_frames),
+                'SegmentContainer': 'ts',
+                'MinSegments': '2',
+            }
+
+            if audio is not None:
+                params['AudioStreamIndex'] = str(audio)
+            if subtitle is not None:
+                params['SubtitleMethod'] = 'Encode'
+                params['SubtitleStreamIndex'] = str(subtitle)
+
+            jellyfin_url = f"{settings.jellyfin_url}/Videos/{m}/main.m3u8?{urllib.parse.urlencode(params)}"
+
+            # Store stream info
+            active_streams[stream_key] = {
+                'media_id': media_id,
+                'audio': audio,
+                'subtitle': subtitle,
+                'mode': 'vod',
+                'jellyfin_url': jellyfin_url,
+                'created_at': time.time(),
+                'last_accessed': time.time()
+            }
+
+        # Fetch the playlist to get segment list
+        op["status"] = "fetching_playlist"
+
+        def fetch_playlist():
+            with urllib.request.urlopen(jellyfin_url, timeout=120.0) as response:
+                return response.read()
+
+        content = await asyncio.to_thread(fetch_playlist)
+
+        # Cache the playlist content to avoid creating multiple Jellyfin sessions
+        active_streams[stream_key]['playlist_content'] = content
+
+        # Extract and store session info (critical for playback!)
+        # Don't overwrite if already set to avoid creating conflicting sessions
+        if content and 'session_id' not in active_streams[stream_key]:
+            match = re.search(rb'(hls\d*)/([^/]+)/', content)
+            if match:
+                hls_dir = match.group(1).decode('utf-8')
+                session_id = match.group(2).decode('utf-8')
+                active_streams[stream_key]['hls_dir'] = hls_dir
+                active_streams[stream_key]['session_id'] = session_id
+            else:
+                raise Exception("Failed to extract session info from playlist")
+
+        # Parse playlist to extract segments
+        text = content.decode('utf-8')
+        lines = text.split('\n')
+        segments = []
+
+        for line in lines:
+            if line and not line.startswith('#'):
+                # VOD segments come with full path and query params: hls1/main/0.ts?params...
+                # Store the segment filename with query params for cache key
+                match = re.search(r'hls\d*/[^/]+/(.+\.ts.*)', line)
+                if match:
+                    # Store the full relative path from hls*/session/ onwards
+                    segments.append(match.group(1))
+
+        op["total_segments"] = len(segments)
+        op["status"] = "warming"
+
+        # Fetch all segments
+        for i, segment in enumerate(segments):
+            # Check if cancelled
+            if prewarm_id not in prewarm_operations or prewarm_operations[prewarm_id]["status"] == "cancelled":
+                op["status"] = "cancelled"
+                return
+
+            # Extract just the filename for cache path (without query params)
+            segment_file = segment.split('?')[0]
+            cache_path = Path(settings.cache_dir) / stream_key / segment_file
+
+            if not cache_path.exists():
+                # Build segment URL
+                session_id = active_streams[stream_key].get('session_id')
+                hls_dir = active_streams[stream_key].get('hls_dir', 'hls1')
+
+                # For VOD, segment already has full path with all query params from Jellyfin
+                # Just prepend the Jellyfin base URL and Videos path
+                segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment}"
+
+                # Fetch and cache
+                timeout = 120.0 if i < 3 else 60.0
+                await fetch_and_cache(segment_url, cache_path, timeout=timeout)
+
+            # Update progress
+            if cache_path.exists():
+                op["segments_cached"] = i + 1
+                op["bytes_cached"] = sum(f.stat().st_size for f in (Path(settings.cache_dir) / stream_key).glob("*.ts"))
+
+        # Mark as ready
+        op["status"] = "ready"
+
+    except Exception as e:
+        if prewarm_id in prewarm_operations:
+            prewarm_operations[prewarm_id]["status"] = "error"
+            prewarm_operations[prewarm_id]["error"] = str(e)
+        print(f"Pre-warm error: {e}")
+
+
+@app.get("/prewarm/{prewarm_id}/status")
+async def get_prewarm_status(prewarm_id: str):
+    """Get status of a pre-warm operation"""
+    if prewarm_id not in prewarm_operations:
+        raise HTTPException(status_code=404, detail="Pre-warm operation not found")
+
+    op = prewarm_operations[prewarm_id]
+
+    # Calculate elapsed time
+    elapsed = time.time() - op["start_time"]
+
+    # Get media info
+    media_info = {}
+    try:
+        item_info = get_item_info(op["media_id"])
+        media_info["name"] = item_info.get("Name", "Unknown")
+        media_info["type"] = item_info.get("Type", "Unknown")
+
+        if item_info.get('Type') == 'Episode':
+            media_info['series_name'] = item_info.get('SeriesName')
+            media_info['season'] = item_info.get('ParentIndexNumber')
+            media_info['episode'] = item_info.get('IndexNumber')
+    except:
+        media_info["name"] = "Unknown"
+        media_info["type"] = "Unknown"
+
+    # Calculate progress percentage
+    progress = 0
+    if op["total_segments"] > 0:
+        progress = (op["segments_cached"] / op["total_segments"]) * 100
+
+    return {
+        "prewarm_id": prewarm_id,
+        "media_id": op["media_id"],
+        "media_info": media_info,
+        "audio": op["audio"],
+        "subtitle": op["subtitle"],
+        "mode": op["mode"],
+        "status": op["status"],
+        "elapsed_seconds": int(elapsed),
+        "segments_cached": op["segments_cached"],
+        "total_segments": op["total_segments"],
+        "progress_percent": round(progress, 1),
+        "bytes_cached": op["bytes_cached"],
+        "error": op["error"]
+    }
+
+
+@app.post("/prewarm/{prewarm_id}/cancel")
+async def cancel_prewarm(prewarm_id: str):
+    """Cancel a pre-warm operation"""
+    if prewarm_id not in prewarm_operations:
+        raise HTTPException(status_code=404, detail="Pre-warm operation not found")
+
+    op = prewarm_operations[prewarm_id]
+
+    if op["status"] in ["ready", "error", "cancelled"]:
+        return {"status": "already_finished", "current_status": op["status"]}
+
+    # Mark as cancelled
+    op["status"] = "cancelled"
+
+    # Cancel the task
+    if op["task"] and not op["task"].done():
+        op["task"].cancel()
+
+    return {"status": "cancelled"}
+
+
+@app.get("/prewarm/list")
+async def list_prewarms():
+    """List all pre-warm operations"""
+    operations = []
+
+    for prewarm_id, op in prewarm_operations.items():
+        elapsed = time.time() - op["start_time"]
+        progress = 0
+        if op["total_segments"] > 0:
+            progress = (op["segments_cached"] / op["total_segments"]) * 100
+
+        operations.append({
+            "prewarm_id": prewarm_id,
+            "media_id": op["media_id"],
+            "audio": op["audio"],
+            "subtitle": op["subtitle"],
+            "mode": op["mode"],
+            "status": op["status"],
+            "elapsed_seconds": int(elapsed),
+            "progress_percent": round(progress, 1),
+            "segments_cached": op["segments_cached"],
+            "total_segments": op["total_segments"]
+        })
+
+    return {"operations": operations}
+
+
+@app.delete("/prewarm/{prewarm_id}")
+async def delete_prewarm(prewarm_id: str):
+    """Delete a pre-warm operation from the list"""
+    if prewarm_id not in prewarm_operations:
+        raise HTTPException(status_code=404, detail="Pre-warm operation not found")
+
+    # Cancel if still running
+    op = prewarm_operations[prewarm_id]
+    if op["task"] and not op["task"].done():
+        op["task"].cancel()
+
+    del prewarm_operations[prewarm_id]
+
+    return {"status": "deleted"}
 
 
 @app.post("/cleanup")

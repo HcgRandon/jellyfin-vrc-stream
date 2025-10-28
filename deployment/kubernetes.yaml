@@ -5,6 +5,10 @@ metadata:
 data:
   JELLYFIN_URL: "http://jellyfin:8096"
   CACHE_DIR: "/tmp/hls-cache"
+  # Cleanup settings
+  STREAM_IDLE_TIMEOUT: "300"  # 5 minutes for normal streams
+  LOCKED_STREAM_IDLE_TIMEOUT: "86400"  # 24 hours for locked streams
+  MAX_CACHE_SIZE_MB: "0"  # Disabled by default (0 = no size-based cleanup)
   # Quality settings - optimized for high quality single-stream fan-out
   VIDEO_BITRATE: "40000000"  # 40 Mbps
   AUDIO_BITRATE: "320000"    # 320 Kbps
@@ -77,6 +81,21 @@ spec:
             configMapKeyRef:
               name: jellyfin-vrc-stream-config
               key: CACHE_DIR
+        - name: STREAM_IDLE_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: STREAM_IDLE_TIMEOUT
+        - name: LOCKED_STREAM_IDLE_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: LOCKED_STREAM_IDLE_TIMEOUT
+        - name: MAX_CACHE_SIZE_MB
+          valueFrom:
+            configMapKeyRef:
+              name: jellyfin-vrc-stream-config
+              key: MAX_CACHE_SIZE_MB
         - name: VIDEO_BITRATE
           valueFrom:
             configMapKeyRef:

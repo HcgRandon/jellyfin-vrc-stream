@@ -209,6 +209,36 @@
             display: block;
         }
 
+        .season-group {
+            margin-bottom: 20px;
+        }
+
+        .season-header {
+            background: #4a5568;
+            color: white;
+            padding: 12px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .season-header:hover {
+            background: #2d3748;
+        }
+
+        .season-episodes {
+            display: none;
+            padding-left: 10px;
+        }
+
+        .season-episodes.show {
+            display: block;
+        }
+
         .episode-item {
             padding: 15px;
             background: #f9fafb;
@@ -352,6 +382,175 @@
             margin-left: 4px;
         }
 
+        .prewarm-container {
+            display: none;
+            margin-top: 20px;
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .prewarm-container.show {
+            display: block;
+        }
+
+        .prewarm-item {
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .prewarm-item.status-warming {
+            border-left-color: #f59e0b;
+        }
+
+        .prewarm-item.status-ready {
+            border-left-color: #10b981;
+        }
+
+        .prewarm-item.status-error {
+            border-left-color: #ef4444;
+        }
+
+        .prewarm-item.status-cancelled {
+            border-left-color: #6b7280;
+        }
+
+        .prewarm-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .prewarm-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .prewarm-status {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .prewarm-status.status-initializing {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .prewarm-status.status-warming {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .prewarm-status.status-ready {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .prewarm-status.status-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .prewarm-status.status-cancelled {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .prewarm-progress {
+            margin: 15px 0;
+        }
+
+        .prewarm-progress-bar-bg {
+            width: 100%;
+            height: 24px;
+            background: #e5e7eb;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .prewarm-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .prewarm-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .prewarm-stat {
+            background: #f9fafb;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .prewarm-stat-label {
+            color: #6b7280;
+            font-size: 11px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .prewarm-stat-value {
+            color: #1f2937;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+
+        .prewarm-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .prewarm-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .prewarm-btn-cancel {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .prewarm-btn-cancel:hover {
+            background: #fecaca;
+        }
+
+        .prewarm-btn-delete {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .prewarm-btn-delete:hover {
+            background: #d1d5db;
+        }
+
         .stream-image {
             width: 60px;
             height: 90px;
@@ -476,11 +675,15 @@
             </div>
             <div class="controls">
                 <button class="btn-control" onclick="toggleActiveStreams()">View Active Streams</button>
+                <button class="btn-control" onclick="togglePrewarmOps()">View Pre-warm Operations</button>
                 <button class="btn-control" onclick="runCleanup()">Run Cleanup</button>
                 <button class="btn-control btn-danger" onclick="refreshPage()">Refresh Page</button>
             </div>
             <div class="streams-container" id="streams-container">
                 <div class="loading">Loading streams...</div>
+            </div>
+            <div class="prewarm-container" id="prewarm-container">
+                <div class="loading">Loading pre-warm operations...</div>
             </div>
         </header>
 
@@ -488,8 +691,7 @@
             <div class="converter-title">Convert Jellyfin Share URL</div>
             <input type="text" class="converter-input" id="converterInput" placeholder="Paste Jellyfin share URL here (e.g., https://jellyfin.../Download?api_key=...)">
             <div class="url-buttons">
-                <button class="btn-vod" onclick="convertUrl('vod')">Convert to VOD</button>
-                <button class="btn-live" onclick="convertUrl('live')">Convert to Live</button>
+                <button class="btn-vod" onclick="convertUrl()">Convert URL</button>
             </div>
             <div class="converter-result" id="converterResult"></div>
         </div>
@@ -711,12 +913,17 @@
                             <div style="flex: 1;">
                                 <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL:</div>
                                 <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="vod-url-${mediaId}"></div>
-                                <button class="btn-copy" onclick="copyUrlFromDiv('vod-url-${mediaId}', this)" style="margin-top: 5px;">Copy VOD</button>
+                                <div style="margin-top: 5px; display: flex; gap: 8px;">
+                                    <button class="btn-copy" onclick="copyUrlFromDiv('vod-url-${mediaId}', this)">Copy VOD</button>
+                                    <button class="btn-vod" onclick="prewarmFromUI('${mediaId}', 'vod')">Pre-warm</button>
+                                </div>
                             </div>
                             <div style="flex: 1;">
                                 <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL:</div>
                                 <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="live-url-${mediaId}"></div>
-                                <button class="btn-copy" onclick="copyUrlFromDiv('live-url-${mediaId}', this)" style="margin-top: 5px;">Copy Live</button>
+                                <div style="margin-top: 5px;">
+                                    <button class="btn-copy" onclick="copyUrlFromDiv('live-url-${mediaId}', this)">Copy Live</button>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -742,7 +949,7 @@
             const subtitle = subtitleSelect?.value || '';
 
             // Build VOD URL
-            let vodUrl = `${baseUrl}/media.m3u8?m=${mediaId}`;
+            let vodUrl = `${baseUrl}/vod.m3u8?m=${mediaId}`;
             if (audio) vodUrl += `&audio=${audio}`;
             if (subtitle) vodUrl += `&subtitle=${subtitle}`;
 
@@ -789,28 +996,88 @@
                     if (data.episodes.length === 0) {
                         container.innerHTML = '<div class="no-results">No episodes found</div>';
                     } else {
-                        container.innerHTML = data.episodes.map(ep => {
-                            const epTitle = `S${ep.season}E${ep.episode} - ${ep.name}`;
-                            const epImage = ep.image
-                                ? `<div class="result-image"><img src="${ep.image}" alt="${ep.name}"></div>`
-                                : '<div class="result-image"></div>';
+                        // Group episodes by season
+                        const seasonGroups = {};
+                        data.episodes.forEach(ep => {
+                            const season = ep.season || 0;
+                            if (!seasonGroups[season]) {
+                                seasonGroups[season] = [];
+                            }
+                            seasonGroups[season].push(ep);
+                        });
 
-                            return `
-                                <div class="result-item episode-item">
-                                    ${epImage}
-                                    <div class="result-content">
-                                        <div class="episode-title">${epTitle}</div>
-                                        ${ep.overview ? `<div class="result-overview">${ep.overview}...</div>` : ''}
-                                        <div class="url-buttons">
-                                            <button class="btn-expand" onclick="toggleStreamOptions('${ep.id}', this)">Select Tracks</button>
+                        // Sort seasons
+                        const sortedSeasons = Object.keys(seasonGroups).sort((a, b) => Number(a) - Number(b));
+
+                        // Check if there are multiple seasons
+                        const hasMultipleSeasons = sortedSeasons.length > 1;
+
+                        if (hasMultipleSeasons) {
+                            // Render with season grouping
+                            container.innerHTML = sortedSeasons.map(season => {
+                                const episodes = seasonGroups[season];
+                                const seasonId = `${seriesId}-season-${season}`;
+
+                                const episodesHtml = episodes.map(ep => {
+                                    const epTitle = `E${ep.episode} - ${ep.name}`;
+                                    const epImage = ep.image
+                                        ? `<div class="result-image"><img src="${ep.image}" alt="${ep.name}"></div>`
+                                        : '<div class="result-image"></div>';
+
+                                    return `
+                                        <div class="result-item episode-item">
+                                            ${epImage}
+                                            <div class="result-content">
+                                                <div class="episode-title">${epTitle}</div>
+                                                ${ep.overview ? `<div class="result-overview">${ep.overview}...</div>` : ''}
+                                                <div class="url-buttons">
+                                                    <button class="btn-expand" onclick="toggleStreamOptions('${ep.id}', this)">Select Tracks</button>
+                                                </div>
+                                                <div class="stream-options" id="options-${ep.id}">
+                                                    <div class="loading">Loading track options...</div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div class="stream-options" id="options-${ep.id}">
-                                            <div class="loading">Loading track options...</div>
+                                    `;
+                                }).join('');
+
+                                return `
+                                    <div class="season-group">
+                                        <div class="season-header" onclick="toggleSeason('${seasonId}')">
+                                            <span>Season ${season} (${episodes.length} episodes)</span>
+                                            <span id="${seasonId}-indicator">▼</span>
+                                        </div>
+                                        <div class="season-episodes" id="${seasonId}">
+                                            ${episodesHtml}
                                         </div>
                                     </div>
-                                </div>
-                            `;
-                        }).join('');
+                                `;
+                            }).join('');
+                        } else {
+                            // Single season - render episodes directly without season header
+                            container.innerHTML = data.episodes.map(ep => {
+                                const epTitle = `S${ep.season}E${ep.episode} - ${ep.name}`;
+                                const epImage = ep.image
+                                    ? `<div class="result-image"><img src="${ep.image}" alt="${ep.name}"></div>`
+                                    : '<div class="result-image"></div>';
+
+                                return `
+                                    <div class="result-item episode-item">
+                                        ${epImage}
+                                        <div class="result-content">
+                                            <div class="episode-title">${epTitle}</div>
+                                            ${ep.overview ? `<div class="result-overview">${ep.overview}...</div>` : ''}
+                                            <div class="url-buttons">
+                                                <button class="btn-expand" onclick="toggleStreamOptions('${ep.id}', this)">Select Tracks</button>
+                                            </div>
+                                            <div class="stream-options" id="options-${ep.id}">
+                                                <div class="loading">Loading track options...</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('');
+                        }
                     }
 
                     container.dataset.loaded = 'true';
@@ -821,6 +1088,19 @@
 
             container.classList.add('show');
             button.textContent = 'Hide Episodes';
+        }
+
+        function toggleSeason(seasonId) {
+            const container = document.getElementById(seasonId);
+            const indicator = document.getElementById(`${seasonId}-indicator`);
+
+            if (container.classList.contains('show')) {
+                container.classList.remove('show');
+                indicator.textContent = '▼';
+            } else {
+                container.classList.add('show');
+                indicator.textContent = '▲';
+            }
         }
 
         async function copyUrl(url, button) {
@@ -885,17 +1165,32 @@
                             ? `<img src="${s.media_image}" class="stream-image" alt="${s.media_name}">`
                             : '';
 
+                        const lockIndicator = s.locked ? ' 🔒' : '';
+                        const lockButton = s.locked
+                            ? `<button class="btn-expand" onclick="unlockStream('${s.stream_key}')" style="margin-bottom: 5px;">Unlock</button>`
+                            : `<button class="btn-vod" onclick="lockStream('${s.stream_key}')" style="margin-bottom: 5px;">Lock</button>`;
+
+                        // Build stream URL
+                        const endpoint = s.mode === 'vod' ? 'vod.m3u8' : 'live.m3u8';
+                        let streamUrl = `${baseUrl}/${endpoint}?m=${s.media_id}`;
+                        if (s.audio !== null) streamUrl += `&audio=${s.audio}`;
+                        if (s.subtitle !== null) streamUrl += `&subtitle=${s.subtitle}`;
+
                         return `
                             <div class="stream-item">
                                 <div style="display: flex; gap: 12px;">
                                     ${imageHtml}
                                     <div class="stream-content">
-                                        <div class="stream-title">${title}</div>
+                                        <div class="stream-title">${title}${lockIndicator}</div>
                                         <div class="stream-key">Stream: ${s.stream_key}</div>
                                         <div class="stream-meta">
                                             <div class="stream-meta-item">
                                                 <span class="stream-meta-label">Mode:</span>
                                                 <span class="stream-meta-value">${s.mode}</span>
+                                            </div>
+                                            <div class="stream-meta-item">
+                                                <span class="stream-meta-label">Cache:</span>
+                                                <span class="stream-meta-value">${s.cache_size_mb} MB</span>
                                             </div>
                                             <div class="stream-meta-item">
                                                 <span class="stream-meta-label">Idle:</span>
@@ -910,8 +1205,16 @@
                                                 <span class="stream-meta-value">${s.media_type}</span>
                                             </div>
                                         </div>
+                                        <div style="margin-top: 10px; padding: 10px; background: #f0f4f8; border-radius: 4px;">
+                                            <div style="font-size: 11px; font-weight: 600; color: #666; margin-bottom: 5px;">Stream URL:</div>
+                                            <div style="font-size: 12px; word-break: break-all; color: #333;">${streamUrl}</div>
+                                        </div>
                                     </div>
-                                    <button class="btn-delete" onclick="deleteStream('${s.stream_key}')" style="align-self: flex-start;">Delete</button>
+                                    <div style="display: flex; flex-direction: column; align-self: flex-start;">
+                                        <button class="btn-copy" onclick="copyUrl('${streamUrl}', this)" style="margin-bottom: 5px;">Copy URL</button>
+                                        ${lockButton}
+                                        <button class="btn-delete" onclick="deleteStream('${s.stream_key}')">Delete</button>
+                                    </div>
                                 </div>
                             </div>
                         `;
@@ -936,6 +1239,30 @@
 
                 // Refresh stats
                 loadStats();
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function lockStream(streamKey) {
+            try {
+                const response = await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/lock`, { method: 'POST' });
+                const data = await response.json();
+
+                // Refresh the streams list
+                await loadActiveStreams();
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function unlockStream(streamKey) {
+            try {
+                const response = await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/unlock`, { method: 'POST' });
+                const data = await response.json();
+
+                // Refresh the streams list
+                await loadActiveStreams();
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -968,7 +1295,7 @@
             location.reload();
         }
 
-        function convertUrl(mode) {
+        async function convertUrl() {
             const input = document.getElementById('converterInput');
             const result = document.getElementById('converterResult');
             const url = input.value.trim();
@@ -988,18 +1315,360 @@
                 }
 
                 const mediaId = match[1];
-                const endpoint = mode === 'vod' ? 'media.m3u8' : 'live.m3u8';
-                const streamUrl = `${baseUrl}/${endpoint}?m=${mediaId}`;
+
+                // Show loading state
+                result.innerHTML = '<div style="padding: 15px;">Loading stream options...</div>';
+                result.classList.add('show');
+
+                // Fetch available streams
+                const response = await fetch(`${baseUrl}/media/${mediaId}/streams`);
+                const data = await response.json();
+
+                const audioOptions = data.audio_streams.map(s =>
+                    `<option value="${s.index}" ${s.index === data.default_audio ? 'selected' : ''}>${s.title || s.language}</option>`
+                ).join('');
+
+                const subtitleOptions = data.subtitle_streams.map(s =>
+                    `<option value="${s.index}" ${s.index === data.default_subtitle ? 'selected' : ''}>${s.title || s.language}</option>`
+                ).join('');
 
                 result.innerHTML = `
-                    <div style="margin-bottom: 10px; font-weight: 600;">Converted URL (${mode.toUpperCase()} mode):</div>
-                    <div style="margin-bottom: 10px; word-break: break-all;">${streamUrl}</div>
-                    <button class="btn-copy" onclick="copyUrl('${streamUrl}', this)">Copy URL</button>
+                    <div style="font-weight: 600; margin-bottom: 15px;">Stream Options:</div>
+                    <div class="stream-select">
+                        <label>Audio Track:</label>
+                        <select id="converter-audio" onchange="updateConverterUrls()">
+                            ${audioOptions || '<option value="">No audio tracks</option>'}
+                        </select>
+                    </div>
+                    <div class="stream-select">
+                        <label>Subtitle Track:</label>
+                        <select id="converter-subtitle" onchange="updateConverterUrls()">
+                            <option value="">None</option>
+                            ${subtitleOptions}
+                        </select>
+                    </div>
+                    <div style="margin-top: 15px; display: flex; gap: 15px;">
+                        <div style="flex: 1;">
+                            <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL:</div>
+                            <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="converter-vod-url"></div>
+                            <div style="margin-top: 5px; display: flex; gap: 8px;">
+                                <button class="btn-copy" onclick="copyUrlFromDiv('converter-vod-url', this)">Copy VOD</button>
+                                <button class="btn-vod" onclick="converterPrewarm('vod')">Pre-warm</button>
+                            </div>
+                        </div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL:</div>
+                            <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="converter-live-url"></div>
+                            <div style="margin-top: 5px;">
+                                <button class="btn-copy" onclick="copyUrlFromDiv('converter-live-url', this)">Copy Live</button>
+                            </div>
+                        </div>
+                    </div>
                 `;
-                result.classList.add('show');
+
+                // Store media ID for later use
+                result.dataset.mediaId = mediaId;
+
+                // Generate initial URLs
+                updateConverterUrls();
             } catch (error) {
-                alert(`Error: ${error.message}`);
+                result.innerHTML = `<div style="padding: 15px; color: #ef4444;">Error: ${error.message}</div>`;
+                result.classList.add('show');
             }
+        }
+
+        function updateConverterUrls() {
+            const result = document.getElementById('converterResult');
+            const mediaId = result.dataset.mediaId;
+
+            const audioSelect = document.getElementById('converter-audio');
+            const subtitleSelect = document.getElementById('converter-subtitle');
+
+            const audio = audioSelect?.value || '';
+            const subtitle = subtitleSelect?.value || '';
+
+            // Build VOD URL
+            let vodUrl = `${baseUrl}/vod.m3u8?m=${mediaId}`;
+            if (audio) vodUrl += `&audio=${audio}`;
+            if (subtitle) vodUrl += `&subtitle=${subtitle}`;
+
+            // Build Live URL
+            let liveUrl = `${baseUrl}/live.m3u8?m=${mediaId}`;
+            if (audio) liveUrl += `&audio=${audio}`;
+            if (subtitle) liveUrl += `&subtitle=${subtitle}`;
+
+            // Update URL displays
+            document.getElementById('converter-vod-url').textContent = vodUrl;
+            document.getElementById('converter-live-url').textContent = liveUrl;
+        }
+
+        function converterPrewarm(mode) {
+            const result = document.getElementById('converterResult');
+            const mediaId = result.dataset.mediaId;
+            const audioSelect = document.getElementById('converter-audio');
+            const subtitleSelect = document.getElementById('converter-subtitle');
+
+            const audio = audioSelect?.value ? parseInt(audioSelect.value) : null;
+            const subtitle = subtitleSelect?.value ? parseInt(subtitleSelect.value) : null;
+
+            startPrewarm(mediaId, audio, subtitle, mode);
+        }
+
+        // Pre-warm operations
+        let prewarmRefreshInterval = null;
+
+        async function togglePrewarmOps() {
+            const container = document.getElementById('prewarm-container');
+            const button = event.target;
+
+            if (container.classList.contains('show')) {
+                container.classList.remove('show');
+                button.textContent = 'View Pre-warm Operations';
+                if (prewarmRefreshInterval) {
+                    clearInterval(prewarmRefreshInterval);
+                    prewarmRefreshInterval = null;
+                }
+                return;
+            }
+
+            container.classList.add('show');
+            button.textContent = 'Hide Pre-warm Operations';
+
+            await loadPrewarmOps();
+
+            // Auto-refresh every 2 seconds
+            prewarmRefreshInterval = setInterval(loadPrewarmOps, 2000);
+        }
+
+        async function loadPrewarmOps() {
+            const container = document.getElementById('prewarm-container');
+
+            try {
+                const response = await fetch(`${baseUrl}/prewarm/list`);
+                const data = await response.json();
+
+                if (data.operations.length === 0) {
+                    container.innerHTML = '<div class="no-results">No pre-warm operations</div>';
+                    return;
+                }
+
+                // Fetch detailed status for each operation
+                const detailedOps = await Promise.all(
+                    data.operations.map(async (op) => {
+                        try {
+                            const detailResponse = await fetch(`${baseUrl}/prewarm/${op.prewarm_id}/status`);
+                            return await detailResponse.json();
+                        } catch (error) {
+                            return op;
+                        }
+                    })
+                );
+
+                container.innerHTML = `
+                    <div style="margin-bottom: 10px; font-weight: 600;">Pre-warm Operations: ${data.operations.length}</div>
+                    ${detailedOps.map(op => renderPrewarmItem(op)).join('')}
+                `;
+            } catch (error) {
+                container.innerHTML = `<div class="no-results">Error loading pre-warm operations: ${error.message}</div>`;
+            }
+        }
+
+        function renderPrewarmItem(op) {
+            const mediaName = op.media_info?.name || 'Unknown';
+            const mediaType = op.media_info?.type || '';
+            let title = mediaName;
+
+            if (mediaType === 'Episode' && op.media_info) {
+                title = `${op.media_info.series_name} - S${op.media_info.season}E${op.media_info.episode} - ${mediaName}`;
+            }
+
+            const audioTrack = op.audio !== null ? `Audio: ${op.audio}` : 'Audio: Default';
+            const subtitleTrack = op.subtitle !== null ? `Subtitle: ${op.subtitle}` : 'No Subtitles';
+
+            const progress = op.progress_percent || 0;
+            const sizeMB = (op.bytes_cached / (1024 * 1024)).toFixed(2);
+
+            let actionButtons = '';
+            if (op.status === 'warming' || op.status === 'initializing' || op.status === 'fetching_playlist') {
+                actionButtons = `<button class="prewarm-btn prewarm-btn-cancel" onclick="cancelPrewarm('${op.prewarm_id}')">Cancel</button>`;
+            } else {
+                actionButtons = `<button class="prewarm-btn prewarm-btn-delete" onclick="deletePrewarm('${op.prewarm_id}')">Remove</button>`;
+            }
+
+            // Generate stream URL (only the relevant one for this mode)
+            const streamUrl = op.mode === 'vod'
+                ? `${baseUrl}/vod.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}`
+                : `${baseUrl}/live.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}`;
+
+            const modeLabel = op.mode === 'vod' ? 'VOD' : 'Live';
+
+            return `
+                <div class="prewarm-item status-${op.status}">
+                    <div class="prewarm-header">
+                        <div class="prewarm-title">${title}</div>
+                        <div class="prewarm-status status-${op.status}">${op.status}</div>
+                    </div>
+
+                    <div style="font-size: 13px; color: #666; margin-bottom: 10px;">
+                        ${audioTrack} | ${subtitleTrack} | Mode: ${op.mode.toUpperCase()}
+                    </div>
+
+                    ${op.status !== 'error' ? `
+                    <div class="prewarm-progress">
+                        <div class="prewarm-progress-bar-bg">
+                            <div class="prewarm-progress-bar" style="width: ${progress}%">
+                                ${progress.toFixed(1)}%
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="prewarm-stats">
+                        <div class="prewarm-stat">
+                            <div class="prewarm-stat-label">Segments</div>
+                            <div class="prewarm-stat-value">${op.segments_cached} / ${op.total_segments}</div>
+                        </div>
+                        <div class="prewarm-stat">
+                            <div class="prewarm-stat-label">Size</div>
+                            <div class="prewarm-stat-value">${sizeMB} MB</div>
+                        </div>
+                        <div class="prewarm-stat">
+                            <div class="prewarm-stat-label">Time</div>
+                            <div class="prewarm-stat-value">${op.elapsed_seconds}s</div>
+                        </div>
+                    </div>
+                    ` : `
+                    <div style="color: #ef4444; font-size: 13px; margin-top: 10px;">
+                        Error: ${op.error}
+                    </div>
+                    `}
+
+                    ${progress >= 10 ? `
+                    <div style="margin-top: 15px; padding: 12px; background: #f0fdf4; border-radius: 6px; font-size: 13px;">
+                        <div style="font-weight: 600; color: #065f46; margin-bottom: 8px;">Stream URL (${modeLabel} Mode):</div>
+                        <div style="word-break: break-all; color: #666; margin-bottom: 8px;">${streamUrl}</div>
+                        <button class="btn-copy" style="padding: 6px 12px; font-size: 12px;" onclick="copyUrl('${streamUrl}', this)">Copy URL</button>
+                    </div>
+                    ` : ''}
+
+                    <div class="prewarm-actions">
+                        ${actionButtons}
+                    </div>
+                </div>
+            `;
+        }
+
+        function prewarmFromUI(mediaId, mode) {
+            // Get selected audio and subtitle values
+            const audioSelect = document.getElementById(`audio-${mediaId}`);
+            const subtitleSelect = document.getElementById(`subtitle-${mediaId}`);
+
+            const audio = audioSelect?.value ? parseInt(audioSelect.value) : null;
+            const subtitle = subtitleSelect?.value ? parseInt(subtitleSelect.value) : null;
+
+            startPrewarm(mediaId, audio, subtitle, mode);
+        }
+
+        async function startPrewarm(mediaId, audio, subtitle, mode) {
+            try {
+                const params = new URLSearchParams({
+                    media_id: mediaId,
+                    mode: mode
+                });
+
+                if (audio !== null && audio !== undefined) {
+                    params.append('audio', audio);
+                }
+                if (subtitle !== null && subtitle !== undefined) {
+                    params.append('subtitle', subtitle);
+                }
+
+                const response = await fetch(`${baseUrl}/prewarm/start?${params.toString()}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                showToast(`Pre-warm started! Operation ID: ${data.prewarm_id.substring(0, 8)}...`, 'success');
+
+                // Scroll to top of page
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+
+                // Show prewarm panel if not visible
+                const container = document.getElementById('prewarm-container');
+                if (!container.classList.contains('show')) {
+                    // Find the button and click it to expand
+                    const buttons = document.querySelectorAll('.btn-control');
+                    for (const btn of buttons) {
+                        if (btn.textContent.includes('Pre-warm')) {
+                            btn.click();
+                            break;
+                        }
+                    }
+                } else {
+                    // Just refresh the list
+                    await loadPrewarmOps();
+                }
+            } catch (error) {
+                showToast(`Failed to start pre-warm: ${error.message}`, 'error');
+            }
+        }
+
+        async function cancelPrewarm(prewarmId) {
+            try {
+                const response = await fetch(`${baseUrl}/prewarm/${prewarmId}/cancel`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                showToast('Pre-warm cancelled', 'info');
+                await loadPrewarmOps();
+            } catch (error) {
+                showToast(`Failed to cancel: ${error.message}`, 'error');
+            }
+        }
+
+        async function deletePrewarm(prewarmId) {
+            try {
+                const response = await fetch(`${baseUrl}/prewarm/${prewarmId}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                await loadPrewarmOps();
+            } catch (error) {
+                showToast(`Failed to delete: ${error.message}`, 'error');
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            // Create toast element
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-' + type;
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 15px 20px;
+                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+                color: white;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 10000;
+                font-size: 14px;
+                font-weight: 500;
+                max-width: 400px;
+                animation: slideIn 0.3s ease;
+            `;
+
+            document.body.appendChild(toast);
+
+            // Auto-remove after 4 seconds
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => {
+                    document.body.removeChild(toast);
+                }, 300);
+            }, 4000);
         }
     </script>
 </body>

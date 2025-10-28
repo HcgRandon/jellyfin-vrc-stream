@@ -12,7 +12,7 @@ A simple FastAPI proxy service that:
 
 ## How It Works
 
-1. Client requests: `GET /media.m3u8?m={media_id}`
+1. Client requests: `GET /vod.m3u8?m={media_id}`
 2. Proxy fetches HLS stream from Jellyfin
 3. Proxy caches playlist and segments to disk
 4. All clients read from the same cached files
@@ -30,7 +30,7 @@ A simple FastAPI proxy service that:
 
 ### VOD Mode (Seekable, Full Video)
 ```
-GET /media.m3u8?m={media_id}
+GET /vod.m3u8?m={media_id}
 ```
 
 Uses Jellyfin's `main.m3u8` endpoint for full video playback with seeking support.
@@ -43,10 +43,10 @@ Uses Jellyfin's `main.m3u8` endpoint for full video playback with seeking suppor
 **Example:**
 ```bash
 # Auto-select best streams (Japanese audio + English subtitles)
-curl http://proxy:8000/media.m3u8?m=abc123
+curl http://proxy:8000/vod.m3u8?m=abc123
 
 # Manual selection
-curl http://proxy:8000/media.m3u8?m=abc123&audio=2&subtitle=5
+curl http://proxy:8000/vod.m3u8?m=abc123&audio=2&subtitle=5
 ```
 
 ### Live Streaming Mode
@@ -165,7 +165,7 @@ Use the proxy URL in VRChat video players:
 
 **VOD Mode (recommended for full videos with seeking):**
 ```
-http://proxy:8000/media.m3u8?m=<media_id>
+http://proxy:8000/vod.m3u8?m=<media_id>
 ```
 
 **Live Mode (for real-time streaming without seeking):**
