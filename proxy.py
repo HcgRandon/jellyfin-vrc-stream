@@ -1393,4 +1393,10 @@ async def manual_cleanup():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        proxy_headers=True,  # Trust proxy headers like X-Forwarded-For
+        forwarded_allow_ips="*"  # Trust all proxy IPs (safe behind Traefik)
+    )
