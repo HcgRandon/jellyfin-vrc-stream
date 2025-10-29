@@ -339,47 +339,125 @@
         .stream-item {
             padding: 15px;
             background: white;
-            border-radius: 6px;
-            margin-bottom: 10px;
-            font-size: 13px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #667eea;
         }
 
-        .stream-key {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 8px;
-            font-size: 14px;
+        .stream-item.mode-vod {
+            border-left-color: #10b981;
+        }
+
+        .stream-item.mode-live {
+            border-left-color: #f59e0b;
+        }
+
+        .stream-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
         }
 
         .stream-title {
-            font-size: 13px;
-            color: #444;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .stream-mode-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .stream-mode-badge.mode-vod {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .stream-mode-badge.mode-live {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .stream-image {
+            width: 80px;
+            height: 120px;
+            border-radius: 6px;
+            object-fit: cover;
+        }
+
+        .stream-key {
+            font-size: 11px;
+            color: #999;
             margin-bottom: 8px;
         }
 
-        .stream-meta {
+        .stream-stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 8px;
+            margin: 10px 0;
+        }
+
+        .stream-stat {
+            background: #f9fafb;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .stream-stat-label {
+            color: #6b7280;
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .stream-stat-value {
+            color: #1f2937;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+
+        .stream-progress {
+            margin: 8px 0;
+        }
+
+        .stream-progress-bar-bg {
+            width: 100%;
+            height: 20px;
+            background: #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .stream-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .stream-actions {
+            display: flex;
+            gap: 6px;
             margin-top: 10px;
         }
 
-        .stream-meta-item {
-            font-size: 14px;
-            padding: 8px;
-            background: #f9fafb;
-            border-radius: 4px;
-        }
-
-        .stream-meta-label {
-            font-weight: 600;
-            color: #555;
-            font-size: 15px;
-        }
-
-        .stream-meta-value {
-            color: #777;
-            margin-left: 4px;
+        .stream-actions button {
+            font-size: 12px;
+            padding: 6px 12px;
         }
 
         .prewarm-container {
@@ -1155,7 +1233,7 @@
                 }
 
                 container.innerHTML = `
-                    <div style="margin-bottom: 10px; font-weight: 600;">Active Streams: ${data.streams.length} | Cache: ${data.cache_size_mb} MB</div>
+                    <div style="margin-bottom: 15px; font-weight: 600; color: #333;">Active Streams: ${data.streams.length} | Total Cache: ${data.cache_size_mb} MB</div>
                     ${data.streams.map(s => {
                         const title = s.media_type === 'Episode' && s.series_name
                             ? `${s.series_name} - S${s.season}E${s.episode} - ${s.media_name}`
@@ -1166,9 +1244,7 @@
                             : '';
 
                         const lockIndicator = s.locked ? ' 🔒' : '';
-                        const lockButton = s.locked
-                            ? `<button class="btn-expand" onclick="unlockStream('${s.stream_key}')" style="margin-bottom: 5px;">Unlock</button>`
-                            : `<button class="btn-vod" onclick="lockStream('${s.stream_key}')" style="margin-bottom: 5px;">Lock</button>`;
+                        const modeLabel = s.mode === 'vod' ? 'VOD' : 'LIVE';
 
                         // Build stream URL
                         const endpoint = s.mode === 'vod' ? 'vod.m3u8' : 'live.m3u8';
@@ -1176,44 +1252,72 @@
                         if (s.audio !== null) streamUrl += `&audio=${s.audio}`;
                         if (s.subtitle !== null) streamUrl += `&subtitle=${s.subtitle}`;
 
+                        const lockButton = s.locked
+                            ? `<button class="btn-expand" onclick="unlockStream('${s.stream_key}')">Unlock Stream</button>`
+                            : `<button class="btn-vod" onclick="lockStream('${s.stream_key}')">Lock Stream</button>`;
+
                         return `
-                            <div class="stream-item">
-                                <div style="display: flex; gap: 12px;">
-                                    ${imageHtml}
-                                    <div class="stream-content">
+                            <div class="stream-item mode-${s.mode}">
+                                <div class="stream-header">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
                                         <div class="stream-title">${title}${lockIndicator}</div>
-                                        <div class="stream-key">Stream: ${s.stream_key}</div>
-                                        <div class="stream-meta">
-                                            <div class="stream-meta-item">
-                                                <span class="stream-meta-label">Mode:</span>
-                                                <span class="stream-meta-value">${s.mode}</span>
-                                            </div>
-                                            <div class="stream-meta-item">
-                                                <span class="stream-meta-label">Cache:</span>
-                                                <span class="stream-meta-value">${s.cache_size_mb} MB</span>
-                                            </div>
-                                            <div class="stream-meta-item">
-                                                <span class="stream-meta-label">Idle:</span>
-                                                <span class="stream-meta-value">${s.idle_seconds}s</span>
-                                            </div>
-                                            <div class="stream-meta-item">
-                                                <span class="stream-meta-label">Age:</span>
-                                                <span class="stream-meta-value">${s.age_seconds}s</span>
-                                            </div>
-                                            <div class="stream-meta-item">
-                                                <span class="stream-meta-label">Type:</span>
-                                                <span class="stream-meta-value">${s.media_type}</span>
-                                            </div>
-                                        </div>
-                                        <div style="margin-top: 10px; padding: 10px; background: #f0f4f8; border-radius: 4px;">
-                                            <div style="font-size: 11px; font-weight: 600; color: #666; margin-bottom: 5px;">Stream URL:</div>
-                                            <div style="font-size: 12px; word-break: break-all; color: #333;">${streamUrl}</div>
-                                        </div>
+                                        <div style="font-size: 12px; color: #10b981; font-weight: 600;">👁 ${s.active_viewers || 0}</div>
                                     </div>
-                                    <div style="display: flex; flex-direction: column; align-self: flex-start;">
-                                        <button class="btn-copy" onclick="copyUrl('${streamUrl}', this)" style="margin-bottom: 5px;">Copy URL</button>
-                                        ${lockButton}
-                                        <button class="btn-delete" onclick="deleteStream('${s.stream_key}')">Delete</button>
+                                    <div class="stream-mode-badge mode-${s.mode}">${modeLabel}</div>
+                                </div>
+
+                                <div style="display: flex; gap: 12px;">
+                                    ${imageHtml ? `<div style="flex-shrink: 0;">${imageHtml}</div>` : ''}
+                                    <div style="flex: 1; min-width: 0;">
+                                        <div class="stream-key">${s.stream_key}</div>
+                                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
+                                            ${s.media_type || 'Unknown'} | Audio: ${s.audio !== null ? s.audio : 'Auto'} | Subtitle: ${s.subtitle !== null ? s.subtitle : 'None'}
+                                        </div>
+
+                                        ${s.total_segments ? `
+                                        <div class="stream-progress">
+                                            <div class="stream-progress-bar-bg">
+                                                <div class="stream-progress-bar" style="width: ${s.cache_percentage}%">
+                                                    ${s.cache_percentage}%
+                                                </div>
+                                            </div>
+                                        </div>
+                                        ` : ''}
+
+                                        <div class="stream-stats">
+                                            <div class="stream-stat">
+                                                <div class="stream-stat-label">Segments</div>
+                                                <div class="stream-stat-value">${s.total_segments ? `${s.segments_cached}/${s.total_segments}` : '-'}</div>
+                                            </div>
+                                            <div class="stream-stat">
+                                                <div class="stream-stat-label">Type</div>
+                                                <div class="stream-stat-value">${s.media_type || 'Unknown'}</div>
+                                            </div>
+                                            <div class="stream-stat">
+                                                <div class="stream-stat-label">Size</div>
+                                                <div class="stream-stat-value">${s.cache_size_mb}MB</div>
+                                            </div>
+                                            <div class="stream-stat">
+                                                <div class="stream-stat-label">Idle</div>
+                                                <div class="stream-stat-value">${s.idle_seconds}s</div>
+                                            </div>
+                                            <div class="stream-stat">
+                                                <div class="stream-stat-label">Age</div>
+                                                <div class="stream-stat-value">${s.age_seconds}s</div>
+                                            </div>
+                                        </div>
+
+                                        <div style="margin-top: 8px; padding: 8px; background: #f0fdf4; border-radius: 4px; font-size: 11px;">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                                                <div style="word-break: break-all; color: #666; flex: 1; min-width: 0;">${streamUrl}</div>
+                                                <button class="btn-copy" style="padding: 4px 8px; font-size: 11px; flex-shrink: 0;" onclick="copyUrl('${streamUrl}', this)">Copy</button>
+                                            </div>
+                                        </div>
+
+                                        <div class="stream-actions">
+                                            ${lockButton}
+                                            <button class="btn-delete" onclick="deleteStream('${s.stream_key}')">Delete</button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

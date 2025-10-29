@@ -65,6 +65,9 @@ active_streams = {}
 # Track pre-warm operations
 prewarm_operations = {}
 
+# Viewer activity timeout (if no segment request in this time, viewer is considered inactive)
+VIEWER_TIMEOUT = 60  # seconds
+
 # Lock persistence file
 LOCK_FILE = Path(settings.cache_dir) / ".stream_locks.json"
 
@@ -396,6 +399,18 @@ async def fetch_and_cache(url: str, cache_path: Path, timeout: float = 60.0) -> 
         raise HTTPException(status_code=500, detail=f"Failed to fetch content: {e}")
 
 
+def get_client_ip(request: Request) -> str:
+    """Get real client IP from proxy headers or direct connection"""
+    # Check X-Forwarded-For header first (set by Traefik)
+    forwarded_for = request.headers.get('X-Forwarded-For')
+    if forwarded_for:
+        # X-Forwarded-For can be a comma-separated list, get the first (original client)
+        return forwarded_for.split(',')[0].strip()
+
+    # Fall back to direct connection IP
+    return request.client.host if request.client else 'unknown'
+
+
 def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
     """Rewrite VOD playlist URLs - preserves query params but strips api_key for security"""
     text = content.decode('utf-8')
@@ -714,6 +729,7 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'last_accessed': time.time(),
             'created_at': time.time(),
         }
+        # Note: This overwrites the stream dict, automatically clearing 'recovered' flag
 
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
@@ -821,6 +837,13 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
     # Check if this is a nested playlist or a segment
     is_playlist = segment_file.endswith('.m3u8')
 
+    # Track viewer for .ts segments (not playlists)
+    if not is_playlist and segment_file.endswith('.ts'):
+        client_ip = get_client_ip(request)
+        if 'viewers' not in active_streams[stream_key]:
+            active_streams[stream_key]['viewers'] = {}
+        active_streams[stream_key]['viewers'][client_ip] = time.time()
+
     # Build Jellyfin URL preserving query params and adding api_key back
     query_string = request.url.query
     if query_string:
@@ -873,7 +896,7 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
 
 
 @app.get("/live/{stream_key}/{segment_file}")
-async def get_live_segment(stream_key: str, segment_file: str):
+async def get_live_segment(stream_key: str, segment_file: str, request: Request):
     """Get live segment - use stream_key to distinguish different audio/subtitle combos"""
     # Wait for startup/recovery to complete
     await startup_complete.wait()
@@ -883,6 +906,13 @@ async def get_live_segment(stream_key: str, segment_file: str):
 
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
+
+    # Track viewer for .ts segments
+    if segment_file.endswith('.ts'):
+        client_ip = get_client_ip(request)
+        if 'viewers' not in active_streams[stream_key]:
+            active_streams[stream_key]['viewers'] = {}
+        active_streams[stream_key]['viewers'][client_ip] = time.time()
 
     media_id = active_streams[stream_key]['media_id']
     session_id = active_streams[stream_key]['session_id']
@@ -918,6 +948,42 @@ async def list_streams():
     streams = []
 
     for key, info in active_streams.items():
+        # Count cached segments
+        cache_path = Path(settings.cache_dir) / key
+        segments_cached = 0
+        if cache_path.exists():
+            segments_cached = len(list(cache_path.glob("*.ts")))
+
+        # Calculate total segments from playlist if available
+        total_segments = None
+        cache_percentage = None
+
+        if 'playlist_content' in info:
+            try:
+                playlist_text = info['playlist_content'].decode('utf-8')
+                # Count non-comment, non-empty lines that are segments
+                total_segments = sum(1 for line in playlist_text.split('\n')
+                                    if line and not line.startswith('#') and '.ts' in line)
+
+                if total_segments > 0:
+                    cache_percentage = round((segments_cached / total_segments) * 100, 1)
+            except:
+                pass
+
+        # Count active viewers (those who accessed segments in last VIEWER_TIMEOUT seconds)
+        active_viewers = 0
+        if 'viewers' in info:
+            # Clean up stale viewers while counting
+            stale_viewers = []
+            for viewer_ip, last_seen in info['viewers'].items():
+                if current_time - last_seen <= VIEWER_TIMEOUT:
+                    active_viewers += 1
+                else:
+                    stale_viewers.append(viewer_ip)
+            # Remove stale viewers
+            for viewer_ip in stale_viewers:
+                del info['viewers'][viewer_ip]
+
         stream_info = {
             "stream_key": key,
             "media_id": info['media_id'],
@@ -927,6 +993,10 @@ async def list_streams():
             "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
             "age_seconds": int(current_time - info.get('created_at', current_time)),
             "cache_size_mb": round(get_stream_cache_size_mb(key), 2),
+            "segments_cached": segments_cached,
+            "total_segments": total_segments,
+            "cache_percentage": cache_percentage,
+            "active_viewers": active_viewers,
             "locked": info.get('locked', False),
         }
 

@@ -18,4 +18,4 @@ RUN mkdir -p /tmp/hls-cache && chmod 777 /tmp/hls-cache
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
