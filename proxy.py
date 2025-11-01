@@ -183,7 +183,7 @@ def get_stream_cache_size_mb(stream_key: str):
 
 
 def cleanup_idle_streams():
-    """Remove idle streams and their cached files (respects locked streams)"""
+    """Remove idle streams and their cached files (respects locked and pre-warming streams)"""
     # Skip if disabled (0 or negative value)
     if settings.stream_idle_timeout <= 0:
         return 0
@@ -192,6 +192,10 @@ def cleanup_idle_streams():
     streams_to_remove = []
 
     for stream_key, info in active_streams.items():
+        # Skip streams that are actively pre-warming
+        if info.get('prewarming', False):
+            continue
+
         idle_time = current_time - info.get('last_accessed', current_time)
         is_locked = info.get('locked', False)
 
@@ -219,7 +223,7 @@ def cleanup_idle_streams():
 
 
 def cleanup_by_size():
-    """Remove oldest streams if cache is too large (skips locked streams)"""
+    """Remove oldest streams if cache is too large (skips locked and pre-warming streams)"""
     # Skip if disabled (0 or negative value)
     if settings.max_cache_size_mb <= 0:
         return 0
@@ -231,9 +235,10 @@ def cleanup_by_size():
 
     print(f"Cache size ({cache_size_mb:.1f} MB) exceeds limit ({settings.max_cache_size_mb} MB), cleaning up...")
 
-    # Sort streams by last access time (oldest first), excluding locked streams
+    # Sort streams by last access time (oldest first), excluding locked and pre-warming streams
     sorted_streams = sorted(
-        [(k, v) for k, v in active_streams.items() if not v.get('locked', False)],
+        [(k, v) for k, v in active_streams.items()
+         if not v.get('locked', False) and not v.get('prewarming', False)],
         key=lambda x: x[1].get('last_accessed', 0)
     )
 
@@ -1141,6 +1146,12 @@ async def prewarm_worker(prewarm_id: str):
         # Check if already active
         if stream_key in active_streams:
             jellyfin_url = active_streams[stream_key]['jellyfin_url']
+            # Auto-lock and mark as pre-warming even if stream exists
+            active_streams[stream_key]['locked'] = True
+            active_streams[stream_key]['prewarming'] = True
+            # Persist the auto-lock
+            locked_streams = get_locked_streams()
+            save_stream_locks(locked_streams)
         else:
             # Initialize new stream
             m = media_id
@@ -1184,8 +1195,14 @@ async def prewarm_worker(prewarm_id: str):
                 'mode': 'vod',
                 'jellyfin_url': jellyfin_url,
                 'created_at': time.time(),
-                'last_accessed': time.time()
+                'last_accessed': time.time(),
+                'locked': True,  # Auto-lock pre-warming streams
+                'prewarming': True  # Mark as actively pre-warming
             }
+
+            # Persist the auto-lock
+            locked_streams = get_locked_streams()
+            save_stream_locks(locked_streams)
 
         # Fetch the playlist to get segment list
         op["status"] = "fetching_playlist"
@@ -1257,13 +1274,18 @@ async def prewarm_worker(prewarm_id: str):
                 op["segments_cached"] = i + 1
                 op["bytes_cached"] = sum(f.stat().st_size for f in (Path(settings.cache_dir) / stream_key).glob("*.ts"))
 
-        # Mark as ready
+        # Mark as ready and remove pre-warming flag (keep lock)
         op["status"] = "ready"
+        if stream_key in active_streams and 'prewarming' in active_streams[stream_key]:
+            del active_streams[stream_key]['prewarming']
 
     except Exception as e:
         if prewarm_id in prewarm_operations:
             prewarm_operations[prewarm_id]["status"] = "error"
             prewarm_operations[prewarm_id]["error"] = str(e)
+        # Remove pre-warming flag on error too (keep lock)
+        if stream_key in active_streams and 'prewarming' in active_streams[stream_key]:
+            del active_streams[stream_key]['prewarming']
         print(f"Pre-warm error: {e}")
 
 
