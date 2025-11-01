@@ -774,6 +774,78 @@
             <div class="converter-result" id="converterResult"></div>
         </div>
 
+        <div class="converter-box">
+            <div class="converter-title">Quality Profiles</div>
+            <div class="url-buttons">
+                <button class="btn-control" onclick="toggleProfileManagement()">Manage Profiles</button>
+                <button class="btn-vod" onclick="showCreateProfileForm()">Create New Profile</button>
+            </div>
+            <div class="streams-container" id="profiles-container">
+                <div class="loading">Loading profiles...</div>
+            </div>
+            <div class="stream-options" id="create-profile-form">
+                <h3 style="margin-bottom: 15px;">Create New Quality Profile</h3>
+                <div class="stream-select">
+                    <label>Profile ID (lowercase, no spaces):</label>
+                    <input type="text" id="new-profile-id" placeholder="e.g., custom-4k" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <div class="stream-select">
+                    <label>Profile Name:</label>
+                    <input type="text" id="new-profile-name" placeholder="e.g., Custom 4K" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <div class="stream-select">
+                    <label>Description:</label>
+                    <input type="text" id="new-profile-desc" placeholder="e.g., Custom 4K profile for VR" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="stream-select">
+                        <label>Video Bitrate (bps):</label>
+                        <input type="number" id="new-profile-vbitrate" placeholder="40000000" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>Audio Bitrate (bps):</label>
+                        <input type="number" id="new-profile-abitrate" placeholder="320000" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>Max Streaming Bitrate (bps):</label>
+                        <input type="number" id="new-profile-maxbitrate" placeholder="50000000" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>Max Width (px):</label>
+                        <input type="number" id="new-profile-width" placeholder="1920" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>Max Height (px):</label>
+                        <input type="number" id="new-profile-height" placeholder="1080" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>Max Framerate (fps):</label>
+                        <input type="number" id="new-profile-framerate" placeholder="60" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>H.264 Profile:</label>
+                        <select id="new-profile-h264profile" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                            <option value="baseline">Baseline</option>
+                            <option value="main">Main</option>
+                            <option value="high" selected>High</option>
+                        </select>
+                    </div>
+                    <div class="stream-select">
+                        <label>H.264 Level:</label>
+                        <input type="text" id="new-profile-h264level" placeholder="42" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="stream-select">
+                        <label>Max Reference Frames:</label>
+                        <input type="number" id="new-profile-refframes" placeholder="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                </div>
+                <div class="url-buttons" style="margin-top: 15px;">
+                    <button class="btn-vod" onclick="createProfile()">Create Profile</button>
+                    <button class="btn-close" onclick="hideCreateProfileForm()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <div class="search-box">
             <input type="text" class="search-input" id="searchInput" placeholder="Search for movies or TV shows...">
         </div>
@@ -973,6 +1045,12 @@
                         `<option value="${s.index}" ${s.index === data.default_subtitle ? 'selected' : ''}>${s.title || s.language}</option>`
                     ).join('');
 
+                    const profilesResponse = await fetch(`${baseUrl}/profiles`);
+                    const profilesData = await profilesResponse.json();
+                    const profileOptions = profilesData.profiles.map(p =>
+                        `<option value="${p.id}" ${p.id === 'high' ? 'selected' : ''}>${p.name} - ${p.description}</option>`
+                    ).join('');
+
                     container.innerHTML = `
                         <div class="stream-select">
                             <label>Audio Track:</label>
@@ -985,6 +1063,12 @@
                             <select id="subtitle-${mediaId}" onchange="updateUrls('${mediaId}')">
                                 <option value="">None</option>
                                 ${subtitleOptions}
+                            </select>
+                        </div>
+                        <div class="stream-select">
+                            <label>Quality Profile:</label>
+                            <select id="profile-${mediaId}" onchange="updateUrls('${mediaId}')">
+                                ${profileOptions}
                             </select>
                         </div>
                         <div style="margin-top: 15px; display: flex; gap: 15px;">
@@ -1022,19 +1106,23 @@
         function updateUrls(mediaId) {
             const audioSelect = document.getElementById(`audio-${mediaId}`);
             const subtitleSelect = document.getElementById(`subtitle-${mediaId}`);
+            const profileSelect = document.getElementById(`profile-${mediaId}`);
 
             const audio = audioSelect?.value || '';
             const subtitle = subtitleSelect?.value || '';
+            const profile = profileSelect?.value || 'high';
 
             // Build VOD URL
             let vodUrl = `${baseUrl}/vod.m3u8?m=${mediaId}`;
             if (audio) vodUrl += `&audio=${audio}`;
             if (subtitle) vodUrl += `&subtitle=${subtitle}`;
+            if (profile && profile !== 'high') vodUrl += `&profile=${profile}`;  // Only add if not default
 
             // Build Live URL
             let liveUrl = `${baseUrl}/live.m3u8?m=${mediaId}`;
             if (audio) liveUrl += `&audio=${audio}`;
             if (subtitle) liveUrl += `&subtitle=${subtitle}`;
+            if (profile && profile !== 'high') liveUrl += `&profile=${profile}`;  // Only add if not default
 
             // Update divs
             const vodDiv = document.getElementById(`vod-url-${mediaId}`);
@@ -1251,6 +1339,7 @@
                         let streamUrl = `${baseUrl}/${endpoint}?m=${s.media_id}`;
                         if (s.audio !== null) streamUrl += `&audio=${s.audio}`;
                         if (s.subtitle !== null) streamUrl += `&subtitle=${s.subtitle}`;
+                        if (s.profile_id && s.profile_id !== 'high') streamUrl += `&profile=${s.profile_id}`;
 
                         const lockButton = s.locked
                             ? `<button class="btn-expand" onclick="unlockStream('${s.stream_key}')">Unlock Stream</button>`
@@ -1556,21 +1645,9 @@
                     return;
                 }
 
-                // Fetch detailed status for each operation
-                const detailedOps = await Promise.all(
-                    data.operations.map(async (op) => {
-                        try {
-                            const detailResponse = await fetch(`${baseUrl}/prewarm/${op.prewarm_id}/status`);
-                            return await detailResponse.json();
-                        } catch (error) {
-                            return op;
-                        }
-                    })
-                );
-
                 container.innerHTML = `
                     <div style="margin-bottom: 10px; font-weight: 600;">Pre-warm Operations: ${data.operations.length}</div>
-                    ${detailedOps.map(op => renderPrewarmItem(op)).join('')}
+                    ${data.operations.map(op => renderPrewarmItem(op)).join('')}
                 `;
             } catch (error) {
                 container.innerHTML = `<div class="no-results">Error loading pre-warm operations: ${error.message}</div>`;
@@ -1600,9 +1677,10 @@
             }
 
             // Generate stream URL (only the relevant one for this mode)
+            const profileParam = op.profile_id && op.profile_id !== 'high' ? `&profile=${op.profile_id}` : '';
             const streamUrl = op.mode === 'vod'
-                ? `${baseUrl}/vod.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}`
-                : `${baseUrl}/live.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}`;
+                ? `${baseUrl}/vod.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}${profileParam}`
+                : `${baseUrl}/live.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}${profileParam}`;
 
             const modeLabel = op.mode === 'vod' ? 'VOD' : 'Live';
 
@@ -1662,17 +1740,19 @@
         }
 
         function prewarmFromUI(mediaId, mode) {
-            // Get selected audio and subtitle values
+            // Get selected audio, subtitle, and profile values
             const audioSelect = document.getElementById(`audio-${mediaId}`);
             const subtitleSelect = document.getElementById(`subtitle-${mediaId}`);
+            const profileSelect = document.getElementById(`profile-${mediaId}`);
 
             const audio = audioSelect?.value ? parseInt(audioSelect.value) : null;
             const subtitle = subtitleSelect?.value ? parseInt(subtitleSelect.value) : null;
+            const profile = profileSelect?.value || 'high';
 
-            startPrewarm(mediaId, audio, subtitle, mode);
+            startPrewarm(mediaId, audio, subtitle, mode, profile);
         }
 
-        async function startPrewarm(mediaId, audio, subtitle, mode) {
+        async function startPrewarm(mediaId, audio, subtitle, mode, profile) {
             try {
                 const params = new URLSearchParams({
                     media_id: mediaId,
@@ -1684,6 +1764,9 @@
                 }
                 if (subtitle !== null && subtitle !== undefined) {
                     params.append('subtitle', subtitle);
+                }
+                if (profile) {
+                    params.append('profile_id', profile);
                 }
 
                 const response = await fetch(`${baseUrl}/prewarm/start?${params.toString()}`, {
@@ -1773,6 +1856,161 @@
                     document.body.removeChild(toast);
                 }, 300);
             }, 4000);
+        }
+
+        // Profile Management Functions
+        async function toggleProfileManagement() {
+            const container = document.getElementById('profiles-container');
+            const button = event.target;
+
+            if (container.classList.contains('show')) {
+                container.classList.remove('show');
+                button.textContent = 'Manage Profiles';
+                return;
+            }
+
+            await loadProfiles();
+            container.classList.add('show');
+            button.textContent = 'Hide Profiles';
+        }
+
+        async function loadProfiles() {
+            const container = document.getElementById('profiles-container');
+
+            try {
+                const response = await fetch(`${baseUrl}/profiles`);
+                const data = await response.json();
+
+                if (data.profiles.length === 0) {
+                    container.innerHTML = '<div class="no-results">No profiles found</div>';
+                    return;
+                }
+
+                container.innerHTML = data.profiles.map(profile => `
+                    <div class="stream-item">
+                        <div class="stream-header">
+                            <div>
+                                <div class="stream-title">${profile.name}</div>
+                                <div style="font-size: 12px; color: #666; margin-top: 4px;">${profile.description}</div>
+                            </div>
+                            ${profile.is_preset ? '<span style="background: #dbeafe; color: #1e40af; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">PRESET</span>' : ''}
+                        </div>
+                        <div class="stream-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; font-size: 12px;">
+                            <div><strong>Resolution:</strong> ${profile.max_width}x${profile.max_height}</div>
+                            <div><strong>Framerate:</strong> ${profile.max_framerate} fps</div>
+                            <div><strong>Video Bitrate:</strong> ${(profile.video_bitrate / 1000000).toFixed(1)} Mbps</div>
+                            <div><strong>Audio Bitrate:</strong> ${(profile.audio_bitrate / 1000).toFixed(0)} Kbps</div>
+                            <div><strong>H.264 Profile:</strong> ${profile.h264_profile}</div>
+                            <div><strong>H.264 Level:</strong> ${profile.h264_level}</div>
+                            <div><strong>Ref Frames:</strong> ${profile.max_ref_frames}</div>
+                        </div>
+                        ${!profile.is_preset ? `
+                            <div class="stream-actions" style="margin-top: 10px; display: flex; gap: 8px;">
+                                <button class="btn-delete" onclick="deleteProfile('${profile.id}')">Delete</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                container.innerHTML = `<div class="no-results">Error loading profiles: ${error.message}</div>`;
+            }
+        }
+
+        function showCreateProfileForm() {
+            const form = document.getElementById('create-profile-form');
+            form.classList.add('show');
+        }
+
+        function hideCreateProfileForm() {
+            const form = document.getElementById('create-profile-form');
+            form.classList.remove('show');
+            // Clear form
+            document.getElementById('new-profile-id').value = '';
+            document.getElementById('new-profile-name').value = '';
+            document.getElementById('new-profile-desc').value = '';
+            document.getElementById('new-profile-vbitrate').value = '';
+            document.getElementById('new-profile-abitrate').value = '';
+            document.getElementById('new-profile-maxbitrate').value = '';
+            document.getElementById('new-profile-width').value = '';
+            document.getElementById('new-profile-height').value = '';
+            document.getElementById('new-profile-framerate').value = '';
+            document.getElementById('new-profile-h264profile').value = 'high';
+            document.getElementById('new-profile-h264level').value = '';
+            document.getElementById('new-profile-refframes').value = '';
+        }
+
+        async function createProfile() {
+            const profile = {
+                id: document.getElementById('new-profile-id').value.trim(),
+                name: document.getElementById('new-profile-name').value.trim(),
+                description: document.getElementById('new-profile-desc').value.trim(),
+                video_bitrate: parseInt(document.getElementById('new-profile-vbitrate').value),
+                audio_bitrate: parseInt(document.getElementById('new-profile-abitrate').value),
+                max_streaming_bitrate: parseInt(document.getElementById('new-profile-maxbitrate').value),
+                max_width: parseInt(document.getElementById('new-profile-width').value),
+                max_height: parseInt(document.getElementById('new-profile-height').value),
+                max_framerate: parseInt(document.getElementById('new-profile-framerate').value),
+                h264_profile: document.getElementById('new-profile-h264profile').value,
+                h264_level: document.getElementById('new-profile-h264level').value.trim(),
+                max_ref_frames: parseInt(document.getElementById('new-profile-refframes').value),
+                is_preset: false
+            };
+
+            // Validation
+            if (!profile.id || !profile.name || !profile.description) {
+                showToast('Please fill in ID, Name, and Description', 'error');
+                return;
+            }
+
+            if (isNaN(profile.video_bitrate) || isNaN(profile.audio_bitrate) || isNaN(profile.max_streaming_bitrate) ||
+                isNaN(profile.max_width) || isNaN(profile.max_height) || isNaN(profile.max_framerate) || isNaN(profile.max_ref_frames)) {
+                showToast('Please fill in all numeric fields with valid numbers', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${baseUrl}/profiles`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(profile)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to create profile');
+                }
+
+                showToast('Profile created successfully', 'success');
+                hideCreateProfileForm();
+                await loadProfiles();
+            } catch (error) {
+                showToast(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function deleteProfile(profileId) {
+            if (!confirm(`Are you sure you want to delete the profile "${profileId}"?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${baseUrl}/profiles/${profileId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to delete profile');
+                }
+
+                showToast('Profile deleted successfully', 'success');
+                await loadProfiles();
+            } catch (error) {
+                showToast(`Error: ${error.message}`, 'error');
+            }
         }
     </script>
 </body>

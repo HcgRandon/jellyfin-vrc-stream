@@ -11,10 +11,11 @@ import time
 import shutil
 import asyncio
 from pathlib import Path
-from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request
+from typing import Optional, Dict, List
+from fastapi import FastAPI, HTTPException, Query, Request, Body
 from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 import urllib.request
 import urllib.parse
@@ -31,24 +32,155 @@ class Settings(BaseSettings):
     cleanup_interval: int = 60  # Check every 60 seconds
     max_cache_size_mb: int = 0  # Disabled by default (0 = no size-based cleanup)
 
-    # Quality settings - defaults optimized for high quality single-stream
-    video_bitrate: int = 40000000  # 40 Mbps for very high quality
-    audio_bitrate: int = 320000    # 320 Kbps for high quality audio
-    max_streaming_bitrate: int = 50000000  # 50 Mbps total cap
-    max_width: int = 1920  # Max resolution width
-    max_height: int = 1080  # Max resolution height
-    max_framerate: int = 60  # Max framerate
-
-    # Encoding quality settings for better motion handling
-    h264_profile: str = "high"   # baseline/main/high - high = better quality
-    h264_level: str = "41"       # H.264 level (41 = 4.1, supports 1080p30, 42 = 4.2 supports 1080p60)
-    max_ref_frames: int = 4      # More reference frames = better quality motion, but higher CPU (1-16)
-
     class Config:
         env_file = ".env"
 
 
 settings = Settings()
+
+
+class QualityProfile(BaseModel):
+    """Quality profile for streaming"""
+    id: str
+    name: str
+    description: str
+    video_bitrate: int
+    audio_bitrate: int
+    max_streaming_bitrate: int
+    max_width: int
+    max_height: int
+    max_framerate: int
+    h264_profile: str
+    h264_level: str
+    max_ref_frames: int
+    is_preset: bool = False  # Whether this is a built-in preset
+
+
+# Built-in quality presets
+BUILTIN_PROFILES: Dict[str, QualityProfile] = {
+    "potato": QualityProfile(
+        id="potato",
+        name="Potato Quality",
+        description="2 Mbps, 480p@24fps - For very limited bandwidth",
+        video_bitrate=2000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=2500000,
+        max_width=854,
+        max_height=480,
+        max_framerate=24,
+        h264_profile="baseline",
+        h264_level="30",
+        max_ref_frames=1,
+        is_preset=True
+    ),
+    "low": QualityProfile(
+        id="low",
+        name="Low Quality",
+        description="5 Mbps, 720p@30fps - For limited bandwidth",
+        video_bitrate=5000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=6000000,
+        max_width=1280,
+        max_height=720,
+        max_framerate=30,
+        h264_profile="main",
+        h264_level="31",
+        max_ref_frames=2,
+        is_preset=True
+    ),
+    "720p60": QualityProfile(
+        id="720p60",
+        name="720p60 Quality",
+        description="10 Mbps, 720p@60fps - Smooth motion at lower resolution",
+        video_bitrate=10000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=12000000,
+        max_width=1280,
+        max_height=720,
+        max_framerate=60,
+        h264_profile="high",
+        h264_level="32",
+        max_ref_frames=3,
+        is_preset=True
+    ),
+    "medium": QualityProfile(
+        id="medium",
+        name="Medium Quality",
+        description="15 Mbps, 1080p@30fps - Balanced quality and bandwidth",
+        video_bitrate=15000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=18000000,
+        max_width=1920,
+        max_height=1080,
+        max_framerate=30,
+        h264_profile="high",
+        h264_level="41",
+        max_ref_frames=3,
+        is_preset=True
+    ),
+    "high": QualityProfile(
+        id="high",
+        name="High Quality",
+        description="40 Mbps, 1080p@60fps - High-quality streaming (default)",
+        video_bitrate=40000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=50000000,
+        max_width=1920,
+        max_height=1080,
+        max_framerate=60,
+        h264_profile="high",
+        h264_level="42",
+        max_ref_frames=4,
+        is_preset=True
+    ),
+    "1440p60": QualityProfile(
+        id="1440p60",
+        name="1440p60 Quality",
+        description="60 Mbps, 1440p@60fps - High resolution for VR",
+        video_bitrate=60000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=75000000,
+        max_width=2560,
+        max_height=1440,
+        max_framerate=60,
+        h264_profile="high",
+        h264_level="51",
+        max_ref_frames=4,
+        is_preset=True
+    ),
+    "ultra": QualityProfile(
+        id="ultra",
+        name="Ultra Quality",
+        description="100 Mbps, 4K@60fps - Maximum quality for local/LAN streaming",
+        video_bitrate=100000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=120000000,
+        max_width=3840,
+        max_height=2160,
+        max_framerate=60,
+        h264_profile="high",
+        h264_level="51",
+        max_ref_frames=5,
+        is_preset=True
+    ),
+    "vr-optimized": QualityProfile(
+        id="vr-optimized",
+        name="VR Optimized",
+        description="50 Mbps, 1080p@60fps - Optimized for VRChat streaming",
+        video_bitrate=50000000,
+        audio_bitrate=320000,
+        max_streaming_bitrate=60000000,
+        max_width=1920,
+        max_height=1080,
+        max_framerate=60,
+        h264_profile="high",
+        h264_level="42",
+        max_ref_frames=3,
+        is_preset=True
+    )
+}
+
+
 app = FastAPI(title="Jellyfin HLS Proxy")
 
 # Ensure cache directory exists
@@ -70,6 +202,10 @@ VIEWER_TIMEOUT = 60  # seconds
 
 # Lock persistence file
 LOCK_FILE = Path(settings.cache_dir) / ".stream_locks.json"
+
+# Custom profiles storage
+custom_profiles: Dict[str, QualityProfile] = {}
+PROFILES_FILE = Path(settings.cache_dir) / ".quality_profiles.json"
 
 # Startup recovery lock - prevents requests until recovery is complete
 startup_complete = asyncio.Event()
@@ -106,6 +242,51 @@ def get_locked_streams():
     return locked
 
 
+def load_custom_profiles():
+    """Load custom quality profiles from persistent storage"""
+    if not PROFILES_FILE.exists():
+        return {}
+    try:
+        with open(PROFILES_FILE, 'r') as f:
+            data = json.load(f)
+            profiles = {}
+            for profile_id, profile_data in data.items():
+                profiles[profile_id] = QualityProfile(**profile_data)
+            return profiles
+    except Exception as e:
+        print(f"Error loading custom profiles: {e}")
+        return {}
+
+
+def save_custom_profiles():
+    """Save custom quality profiles to persistent storage"""
+    try:
+        data = {
+            profile_id: profile.model_dump()
+            for profile_id, profile in custom_profiles.items()
+        }
+        with open(PROFILES_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving custom profiles: {e}")
+
+
+def get_all_profiles() -> Dict[str, QualityProfile]:
+    """Get all profiles (built-in presets + custom)"""
+    all_profiles = BUILTIN_PROFILES.copy()
+    all_profiles.update(custom_profiles)
+    return all_profiles
+
+
+def get_profile(profile_id: str) -> QualityProfile:
+    """Get a specific profile by ID, falling back to high quality if not found"""
+    all_profiles = get_all_profiles()
+    if profile_id in all_profiles:
+        return all_profiles[profile_id]
+    # Fallback to high quality preset
+    return BUILTIN_PROFILES["high"]
+
+
 async def cleanup_task():
     """Background task to cleanup idle streams"""
     while True:
@@ -122,6 +303,13 @@ async def cleanup_task():
 @app.on_event("startup")
 async def startup_event():
     """Start background cleanup task and recover cached streams"""
+    global custom_profiles
+
+    # Load custom quality profiles
+    custom_profiles = load_custom_profiles()
+    if custom_profiles:
+        print(f"Loaded {len(custom_profiles)} custom quality profile(s) from storage")
+
     # Load locked streams from persistent storage
     locked_streams = load_stream_locks()
     if locked_streams:
@@ -280,13 +468,20 @@ def recover_cached_streams():
             if stream_key in active_streams:
                 continue
 
-            # Parse stream_key format: {media_id}_{audio}_{subtitle}_{mode}
-            parts = stream_key.rsplit('_', 3)
-            if len(parts) != 4:
+            # Try new format first: {media_id}_{audio}_{subtitle}_{mode}_{profile_id}
+            parts = stream_key.rsplit('_', 4)
+            profile_id = None
+
+            if len(parts) == 5:
+                # New format with profile
+                media_id, audio_str, subtitle_str, mode, profile_id = parts
+            elif len(parts) == 4:
+                # Old format without profile (backward compatibility)
+                media_id, audio_str, subtitle_str, mode = parts
+                profile_id = 'high'  # Default to high for old streams
+            else:
                 print(f"Skipping invalid stream_key format: {stream_key}")
                 continue
-
-            media_id, audio_str, subtitle_str, mode = parts
 
             # Parse audio/subtitle (None if 'None')
             audio = int(audio_str) if audio_str != 'None' else None
@@ -303,6 +498,7 @@ def recover_cached_streams():
                 'audio': audio,
                 'subtitle': subtitle,
                 'mode': mode,
+                'profile_id': profile_id,
                 'created_at': time.time(),
                 'last_accessed': time.time(),
                 'recovered': True  # Flag to indicate this was recovered from cache
@@ -668,12 +864,18 @@ async def search_media(q: str = Query("", description="Search query")):
         raise HTTPException(status_code=500, detail=f"Search failed: {e}")
 
 
-async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[int], mode: str):
+async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[int], mode: str, profile_id: Optional[str] = None):
     """Common playlist logic for both VOD and live modes"""
     # Wait for startup/recovery to complete
     await startup_complete.wait()
 
-    stream_key = f"{m}_{audio}_{subtitle}_{mode}"
+    # Get quality profile (defaults to 'high' if not specified)
+    if not profile_id:
+        profile_id = "high"
+    profile = get_profile(profile_id)
+
+    # Include profile in stream key for cache isolation
+    stream_key = f"{m}_{audio}_{subtitle}_{mode}_{profile_id}"
 
     # Check if stream needs initialization (new or recovered from cache)
     needs_init = (stream_key not in active_streams or
@@ -700,16 +902,16 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'DeviceId': f'jellyfin-proxy{device_suffix}',
             'VideoCodec': 'h264',
             'AudioCodec': 'aac',
-            'VideoBitrate': str(settings.video_bitrate),
-            'AudioBitrate': str(settings.audio_bitrate),
-            'MaxStreamingBitrate': str(settings.max_streaming_bitrate),
-            'MaxWidth': str(settings.max_width),
-            'MaxHeight': str(settings.max_height),
-            'MaxFramerate': str(settings.max_framerate),
+            'VideoBitrate': str(profile.video_bitrate),
+            'AudioBitrate': str(profile.audio_bitrate),
+            'MaxStreamingBitrate': str(profile.max_streaming_bitrate),
+            'MaxWidth': str(profile.max_width),
+            'MaxHeight': str(profile.max_height),
+            'MaxFramerate': str(profile.max_framerate),
             'MaxAudioChannels': '2',  # Force stereo for compatibility
-            'Profile': settings.h264_profile,
-            'Level': settings.h264_level,
-            'MaxRefFrames': str(settings.max_ref_frames),
+            'Profile': profile.h264_profile,
+            'Level': profile.h264_level,
+            'MaxRefFrames': str(profile.max_ref_frames),
             'SegmentContainer': 'ts',
             'MinSegments': '2',
         }
@@ -731,10 +933,10 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'audio': audio,
             'subtitle': subtitle,
             'mode': mode,
+            'profile_id': profile_id,
             'last_accessed': time.time(),
             'created_at': time.time(),
         }
-        # Note: This overwrites the stream dict, automatically clearing 'recovered' flag
 
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
@@ -785,9 +987,10 @@ async def get_vod_playlist(
     m: str = Query(..., description="Media ID"),
     audio: Optional[int] = Query(None, description="Audio stream index"),
     subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
+    profile: Optional[str] = Query(None, description="Quality profile ID (defaults to 'high')"),
 ):
     """Get VOD HLS playlist (seekable, full video)"""
-    return await _get_stream_playlist(m, audio, subtitle, "vod")
+    return await _get_stream_playlist(m, audio, subtitle, "vod", profile)
 
 
 @app.get("/live.m3u8")
@@ -795,9 +998,10 @@ async def get_live_playlist(
     m: str = Query(..., description="Media ID"),
     audio: Optional[int] = Query(None, description="Audio stream index"),
     subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
+    profile: Optional[str] = Query(None, description="Quality profile ID (defaults to 'high')"),
 ):
     """Get live HLS playlist (real-time streaming)"""
-    return await _get_stream_playlist(m, audio, subtitle, "live")
+    return await _get_stream_playlist(m, audio, subtitle, "live", profile)
 
 
 @app.get("/vod/{media_id}/{segment_path:path}")
@@ -995,6 +1199,7 @@ async def list_streams():
             "audio": info.get('audio'),
             "subtitle": info.get('subtitle'),
             "mode": info.get('mode'),
+            "profile_id": info.get('profile_id', 'high'),
             "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
             "age_seconds": int(current_time - info.get('created_at', current_time)),
             "cache_size_mb": round(get_stream_cache_size_mb(key), 2),
@@ -1094,7 +1299,8 @@ async def start_prewarm(
     media_id: str,
     audio: Optional[int] = None,
     subtitle: Optional[int] = None,
-    mode: str = "vod"
+    mode: str = "vod",
+    profile_id: Optional[str] = None
 ):
     """Start pre-warming a stream by fetching segments in advance (VOD only)"""
     import uuid
@@ -1102,6 +1308,13 @@ async def start_prewarm(
     # Only allow pre-warming for VOD mode
     if mode != "vod":
         raise HTTPException(status_code=400, detail="Pre-warming is only supported for VOD mode")
+
+    # Default to 'high' profile if not specified
+    if not profile_id:
+        profile_id = "high"
+
+    # Validate profile exists
+    profile = get_profile(profile_id)
 
     # Generate unique prewarm ID
     prewarm_id = str(uuid.uuid4())
@@ -1113,6 +1326,7 @@ async def start_prewarm(
         "audio": audio,
         "subtitle": subtitle,
         "mode": mode,
+        "profile_id": profile_id,
         "status": "initializing",
         "start_time": time.time(),
         "segments_cached": 0,
@@ -1136,12 +1350,16 @@ async def prewarm_worker(prewarm_id: str):
         media_id = op["media_id"]
         audio = op["audio"]
         subtitle = op["subtitle"]
+        profile_id = op.get("profile_id", "high")
+
+        # Get quality profile
+        profile = get_profile(profile_id)
 
         # Initialize the stream first
         op["status"] = "initializing"
 
-        # Start VOD stream
-        stream_key = f"{media_id}_{audio}_{subtitle}_vod"
+        # Start VOD stream (include profile in stream key)
+        stream_key = f"{media_id}_{audio}_{subtitle}_vod_{profile_id}"
 
         # Check if already active
         if stream_key in active_streams:
@@ -1165,16 +1383,16 @@ async def prewarm_worker(prewarm_id: str):
                 'DeviceId': f'jellyfin-proxy{device_suffix}',
                 'VideoCodec': 'h264',
                 'AudioCodec': 'aac',
-                'VideoBitrate': str(settings.video_bitrate),
-                'AudioBitrate': str(settings.audio_bitrate),
-                'MaxStreamingBitrate': str(settings.max_streaming_bitrate),
-                'MaxWidth': str(settings.max_width),
-                'MaxHeight': str(settings.max_height),
-                'MaxFramerate': str(settings.max_framerate),
+                'VideoBitrate': str(profile.video_bitrate),
+                'AudioBitrate': str(profile.audio_bitrate),
+                'MaxStreamingBitrate': str(profile.max_streaming_bitrate),
+                'MaxWidth': str(profile.max_width),
+                'MaxHeight': str(profile.max_height),
+                'MaxFramerate': str(profile.max_framerate),
                 'MaxAudioChannels': '2',
-                'Profile': settings.h264_profile,
-                'Level': settings.h264_level,
-                'MaxRefFrames': str(settings.max_ref_frames),
+                'Profile': profile.h264_profile,
+                'Level': profile.h264_level,
+                'MaxRefFrames': str(profile.max_ref_frames),
                 'SegmentContainer': 'ts',
                 'MinSegments': '2',
             }
@@ -1193,6 +1411,7 @@ async def prewarm_worker(prewarm_id: str):
                 'audio': audio,
                 'subtitle': subtitle,
                 'mode': 'vod',
+                'profile_id': profile_id,
                 'jellyfin_url': jellyfin_url,
                 'created_at': time.time(),
                 'last_accessed': time.time(),
@@ -1360,7 +1579,7 @@ async def cancel_prewarm(prewarm_id: str):
 
 @app.get("/prewarm/list")
 async def list_prewarms():
-    """List all pre-warm operations"""
+    """List all pre-warm operations with full details"""
     operations = []
 
     for prewarm_id, op in prewarm_operations.items():
@@ -1369,17 +1588,35 @@ async def list_prewarms():
         if op["total_segments"] > 0:
             progress = (op["segments_cached"] / op["total_segments"]) * 100
 
+        media_info = {}
+        try:
+            item_info = get_item_info(op["media_id"])
+            media_info["name"] = item_info.get("Name", "Unknown")
+            media_info["type"] = item_info.get("Type", "Unknown")
+
+            if item_info.get('Type') == 'Episode':
+                media_info['series_name'] = item_info.get('SeriesName')
+                media_info['season'] = item_info.get('ParentIndexNumber')
+                media_info['episode'] = item_info.get('IndexNumber')
+        except:
+            media_info["name"] = "Unknown"
+            media_info["type"] = "Unknown"
+
         operations.append({
             "prewarm_id": prewarm_id,
             "media_id": op["media_id"],
+            "media_info": media_info,
             "audio": op["audio"],
             "subtitle": op["subtitle"],
             "mode": op["mode"],
+            "profile_id": op.get("profile_id", "high"),
             "status": op["status"],
             "elapsed_seconds": int(elapsed),
             "progress_percent": round(progress, 1),
             "segments_cached": op["segments_cached"],
-            "total_segments": op["total_segments"]
+            "total_segments": op["total_segments"],
+            "bytes_cached": op["bytes_cached"],
+            "error": op["error"]
         })
 
     return {"operations": operations}
@@ -1411,6 +1648,96 @@ async def manual_cleanup():
         "removed_size": removed_size,
         "cache_size_mb": round(get_cache_size_mb(), 2)
     }
+
+
+@app.get("/profiles")
+async def list_profiles():
+    """List all quality profiles (built-in presets + custom)"""
+    all_profiles = get_all_profiles()
+    profiles_list = [profile.model_dump() for profile in all_profiles.values()]
+
+    # Define quality order for built-in presets
+    preset_order = {
+        "potato": 0,
+        "low": 1,
+        "720p60": 2,
+        "medium": 3,
+        "high": 4,
+        "vr-optimized": 5,
+        "1440p60": 6,
+        "ultra": 7
+    }
+
+    # Sort: presets first (by quality order), then custom (by video bitrate)
+    def sort_key(p):
+        if p['is_preset']:
+            return (0, preset_order.get(p['id'], 999), p['name'])
+        else:
+            return (1, -p['video_bitrate'], p['name'])
+
+    profiles_list.sort(key=sort_key)
+    return {"profiles": profiles_list}
+
+
+@app.post("/profiles")
+async def create_profile(profile: QualityProfile):
+    """Create a new custom quality profile"""
+    # Prevent overwriting built-in presets
+    if profile.id in BUILTIN_PROFILES:
+        raise HTTPException(status_code=400, detail=f"Cannot create profile with ID '{profile.id}' - this is a built-in preset")
+
+    # Check if custom profile already exists
+    if profile.id in custom_profiles:
+        raise HTTPException(status_code=409, detail=f"Profile with ID '{profile.id}' already exists")
+
+    # Ensure it's not marked as preset
+    profile.is_preset = False
+
+    # Add to custom profiles
+    custom_profiles[profile.id] = profile
+    save_custom_profiles()
+
+    return {"status": "created", "profile": profile.model_dump()}
+
+
+@app.put("/profiles/{profile_id}")
+async def update_profile(profile_id: str, profile: QualityProfile):
+    """Update an existing custom quality profile"""
+    # Prevent modifying built-in presets
+    if profile_id in BUILTIN_PROFILES:
+        raise HTTPException(status_code=400, detail=f"Cannot modify built-in preset '{profile_id}'")
+
+    # Check if custom profile exists
+    if profile_id not in custom_profiles:
+        raise HTTPException(status_code=404, detail=f"Custom profile '{profile_id}' not found")
+
+    # Ensure ID matches and it's not marked as preset
+    profile.id = profile_id
+    profile.is_preset = False
+
+    # Update profile
+    custom_profiles[profile_id] = profile
+    save_custom_profiles()
+
+    return {"status": "updated", "profile": profile.model_dump()}
+
+
+@app.delete("/profiles/{profile_id}")
+async def delete_profile(profile_id: str):
+    """Delete a custom quality profile"""
+    # Prevent deleting built-in presets
+    if profile_id in BUILTIN_PROFILES:
+        raise HTTPException(status_code=400, detail=f"Cannot delete built-in preset '{profile_id}'")
+
+    # Check if custom profile exists
+    if profile_id not in custom_profiles:
+        raise HTTPException(status_code=404, detail=f"Custom profile '{profile_id}' not found")
+
+    # Delete profile
+    del custom_profiles[profile_id]
+    save_custom_profiles()
+
+    return {"status": "deleted", "profile_id": profile_id}
 
 
 if __name__ == "__main__":
