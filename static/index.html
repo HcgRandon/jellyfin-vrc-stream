@@ -29,6 +29,7 @@
             padding: 30px;
             margin-bottom: 20px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            position: relative;
         }
 
         h1 {
@@ -39,6 +40,19 @@
         .subtitle {
             color: #666;
             font-size: 14px;
+        }
+
+        .debug-info {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 11px;
+            color: #999;
+            text-align: right;
+        }
+
+        .debug-info div {
+            margin-bottom: 2px;
         }
 
         .search-box {
@@ -342,6 +356,7 @@
             border-radius: 8px;
             margin-bottom: 12px;
             border-left: 4px solid #667eea;
+            transition: background-color 0.3s ease;
         }
 
         .stream-item.mode-vod {
@@ -350,6 +365,15 @@
 
         .stream-item.mode-live {
             border-left-color: #f59e0b;
+        }
+
+        .stream-item.highlight {
+            animation: highlight-flash 2s ease-in-out;
+        }
+
+        @keyframes highlight-flash {
+            0%, 100% { background: white; }
+            50% { background: #fef3c7; }
         }
 
         .stream-header {
@@ -458,175 +482,6 @@
         .stream-actions button {
             font-size: 12px;
             padding: 6px 12px;
-        }
-
-        .prewarm-container {
-            display: none;
-            margin-top: 20px;
-            background: #f9fafb;
-            border-radius: 8px;
-            padding: 20px;
-        }
-
-        .prewarm-container.show {
-            display: block;
-        }
-
-        .prewarm-item {
-            padding: 20px;
-            background: white;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            border-left: 4px solid #667eea;
-        }
-
-        .prewarm-item.status-warming {
-            border-left-color: #f59e0b;
-        }
-
-        .prewarm-item.status-ready {
-            border-left-color: #10b981;
-        }
-
-        .prewarm-item.status-error {
-            border-left-color: #ef4444;
-        }
-
-        .prewarm-item.status-cancelled {
-            border-left-color: #6b7280;
-        }
-
-        .prewarm-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .prewarm-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #333;
-        }
-
-        .prewarm-status {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .prewarm-status.status-initializing {
-            background: #dbeafe;
-            color: #1e40af;
-        }
-
-        .prewarm-status.status-warming {
-            background: #fef3c7;
-            color: #92400e;
-        }
-
-        .prewarm-status.status-ready {
-            background: #d1fae5;
-            color: #065f46;
-        }
-
-        .prewarm-status.status-error {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-
-        .prewarm-status.status-cancelled {
-            background: #e5e7eb;
-            color: #374151;
-        }
-
-        .prewarm-progress {
-            margin: 15px 0;
-        }
-
-        .prewarm-progress-bar-bg {
-            width: 100%;
-            height: 24px;
-            background: #e5e7eb;
-            border-radius: 12px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .prewarm-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .prewarm-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 10px;
-            margin: 15px 0;
-        }
-
-        .prewarm-stat {
-            background: #f9fafb;
-            padding: 10px;
-            border-radius: 6px;
-            font-size: 13px;
-        }
-
-        .prewarm-stat-label {
-            color: #6b7280;
-            font-size: 11px;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
-
-        .prewarm-stat-value {
-            color: #1f2937;
-            font-size: 16px;
-            font-weight: 600;
-            margin-top: 4px;
-        }
-
-        .prewarm-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 15px;
-        }
-
-        .prewarm-btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 6px;
-            font-size: 13px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-
-        .prewarm-btn-cancel {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-
-        .prewarm-btn-cancel:hover {
-            background: #fecaca;
-        }
-
-        .prewarm-btn-delete {
-            background: #e5e7eb;
-            color: #374151;
-        }
-
-        .prewarm-btn-delete:hover {
-            background: #d1d5db;
         }
 
         .stream-image {
@@ -739,6 +594,10 @@
 <body>
     <div class="container">
         <header>
+            <div class="debug-info">
+                <div>WS: <span id="ws-status">Connecting...</span></div>
+                <div>Last: <span id="last-update">-</span></div>
+            </div>
             <h1>Jellyfin VRC Stream</h1>
             <p class="subtitle">Search media and generate streaming URLs for VRChat</p>
             <div class="stats" id="stats">
@@ -753,35 +612,12 @@
             </div>
             <div class="controls">
                 <button class="btn-control" onclick="toggleActiveStreams()">View Active Streams</button>
-                <button class="btn-control" onclick="togglePrewarmOps()">View Pre-warm Operations</button>
+                <button class="btn-control" onclick="toggleProfileManagement()">View Profiles</button>
                 <button class="btn-control" onclick="runCleanup()">Run Cleanup</button>
                 <button class="btn-control btn-danger" onclick="refreshPage()">Refresh Page</button>
             </div>
             <div class="streams-container" id="streams-container">
                 <div class="loading">Loading streams...</div>
-            </div>
-            <div class="prewarm-container" id="prewarm-container">
-                <div class="loading">Loading pre-warm operations...</div>
-            </div>
-        </header>
-
-        <div class="converter-box">
-            <div class="converter-title">Convert Jellyfin Share URL</div>
-            <input type="text" class="converter-input" id="converterInput" placeholder="Paste Jellyfin share URL here (e.g., https://jellyfin.../Download?api_key=...)">
-            <div class="url-buttons">
-                <button class="btn-vod" onclick="convertUrl()">Convert URL</button>
-            </div>
-            <div class="converter-result" id="converterResult"></div>
-        </div>
-
-        <div class="converter-box">
-            <div class="converter-title">Quality Profiles</div>
-            <div class="url-buttons">
-                <button class="btn-control" onclick="toggleProfileManagement()">Manage Profiles</button>
-                <button class="btn-vod" onclick="showCreateProfileForm()">Create New Profile</button>
-            </div>
-            <div class="streams-container" id="profiles-container">
-                <div class="loading">Loading profiles...</div>
             </div>
             <div class="stream-options" id="create-profile-form">
                 <h3 style="margin-bottom: 15px;">Create New Quality Profile</h3>
@@ -844,6 +680,18 @@
                     <button class="btn-close" onclick="hideCreateProfileForm()">Cancel</button>
                 </div>
             </div>
+            <div class="streams-container" id="profiles-container">
+                <div class="loading">Loading profiles...</div>
+            </div>
+        </header>
+
+        <div class="converter-box">
+            <div class="converter-title">Convert Jellyfin Share URL</div>
+            <input type="text" class="converter-input" id="converterInput" placeholder="Paste Jellyfin share URL here (e.g., https://jellyfin.../Download?api_key=...)">
+            <div class="url-buttons">
+                <button class="btn-vod" onclick="convertUrl()">Convert URL</button>
+            </div>
+            <div class="converter-result" id="converterResult"></div>
         </div>
 
         <div class="search-box">
@@ -861,21 +709,70 @@
         const baseUrl = window.location.origin;
 
         let searchTimeout;
+        let ws = null;
+        let wsReconnectTimeout = null;
 
-        // Load stats
-        async function loadStats() {
-            try {
-                const response = await fetch(`${baseUrl}/`);
-                const data = await response.json();
-                document.getElementById('active-streams').textContent = data.active_streams;
-                document.getElementById('cache-size').textContent = `${data.cache_size_mb} MB`;
-            } catch (error) {
-                console.error('Failed to load stats:', error);
+        // WebSocket connection management
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                const status = document.getElementById('ws-status');
+                status.textContent = 'Connected';
+                status.style.color = '#10b981';
+                if (wsReconnectTimeout) {
+                    clearTimeout(wsReconnectTimeout);
+                    wsReconnectTimeout = null;
+                }
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString();
+                document.getElementById('last-update').textContent = timeStr;
+                handleWebSocketMessage(data);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                const status = document.getElementById('ws-status');
+                status.textContent = 'Error';
+                status.style.color = '#ef4444';
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed, reconnecting in 3 seconds...');
+                const status = document.getElementById('ws-status');
+                status.textContent = 'Disconnected';
+                status.style.color = '#f59e0b';
+                ws = null;
+                wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'stats_update':
+                    updateStats(data);
+                    break;
+                case 'streams_update':
+                    updateStreamsDisplay(data);
+                    break;
             }
         }
 
-        loadStats();
-        setInterval(loadStats, 10000); // Update every 10s
+        function updateStats(data) {
+            document.getElementById('active-streams').textContent = data.active_streams;
+            document.getElementById('cache-size').textContent = `${data.cache_size_mb} MB`;
+        }
+
+        // Connect WebSocket on page load
+        connectWebSocket();
 
         // Load recent media on page load
         async function loadRecent() {
@@ -1282,7 +1179,8 @@
             }
         }
 
-        let streamsRefreshInterval = null;
+        let streamsVisible = false;
+        let profilesVisible = false;
 
         async function toggleActiveStreams() {
             const container = document.getElementById('streams-container');
@@ -1291,36 +1189,33 @@
             if (container.classList.contains('show')) {
                 container.classList.remove('show');
                 button.textContent = 'View Active Streams';
-                if (streamsRefreshInterval) {
-                    clearInterval(streamsRefreshInterval);
-                    streamsRefreshInterval = null;
-                }
+                streamsVisible = false;
                 return;
             }
 
             container.classList.add('show');
             button.textContent = 'Hide Active Streams';
+            streamsVisible = true;
 
-            // Load streams immediately
+            // Load streams immediately from HTTP (WebSocket will push updates)
             await loadActiveStreams();
-
-            // Auto-refresh every 3 seconds
-            streamsRefreshInterval = setInterval(loadActiveStreams, 3000);
         }
 
-        async function loadActiveStreams() {
+        function updateStreamsDisplay(data) {
+            // Only update if streams panel is visible
+            if (!streamsVisible) return;
+
             const container = document.getElementById('streams-container');
+            renderStreamsHTML(container, data);
+        }
 
-            try {
-                const response = await fetch(`${baseUrl}/streams`);
-                const data = await response.json();
+        function renderStreamsHTML(container, data) {
+            if (data.streams.length === 0) {
+                container.innerHTML = '<div class="no-results">No active streams</div>';
+                return;
+            }
 
-                if (data.streams.length === 0) {
-                    container.innerHTML = '<div class="no-results">No active streams</div>';
-                    return;
-                }
-
-                container.innerHTML = `
+            container.innerHTML = `
                     <div style="margin-bottom: 15px; font-weight: 600; color: #333;">Active Streams: ${data.streams.length} | Total Cache: ${data.cache_size_mb} MB</div>
                     ${data.streams.map(s => {
                         const title = s.media_type === 'Episode' && s.series_name
@@ -1334,6 +1229,20 @@
                         const lockIndicator = s.locked ? ' 🔒' : '';
                         const modeLabel = s.mode === 'vod' ? 'VOD' : 'LIVE';
 
+                        // Prewarm status badge
+                        let prewarmBadge = '';
+                        if (s.prewarm_status) {
+                            const statusLabels = {
+                                'initializing': 'Initializing',
+                                'fetching_playlist': 'Fetching Playlist',
+                                'warming': 'Warming',
+                                'error': 'Error'
+                            };
+                            const statusLabel = statusLabels[s.prewarm_status] || s.prewarm_status;
+                            const badgeColor = s.prewarm_status === 'error' ? '#ef4444' : '#f59e0b';
+                            prewarmBadge = `<div class="stream-mode-badge" style="background: ${badgeColor};">${statusLabel}</div>`;
+                        }
+
                         // Build stream URL
                         const endpoint = s.mode === 'vod' ? 'vod.m3u8' : 'live.m3u8';
                         let streamUrl = `${baseUrl}/${endpoint}?m=${s.media_id}`;
@@ -1345,6 +1254,25 @@
                             ? `<button class="btn-expand" onclick="unlockStream('${s.stream_key}')">Unlock Stream</button>`
                             : `<button class="btn-vod" onclick="lockStream('${s.stream_key}')">Lock Stream</button>`;
 
+                        // Prewarm action buttons
+                        let prewarmActions = '';
+                        if (s.prewarm_status === 'error') {
+                            prewarmActions = `<button class="btn-delete" onclick="dismissPrewarmError('${s.stream_key}')">Dismiss Error</button>`;
+                        } else if (s.prewarm_status) {
+                            prewarmActions = `<button class="btn-expand" onclick="cancelPrewarm('${s.stream_key}')">Cancel Pre-warm</button>`;
+                        }
+
+                        // Prewarm error message
+                        let prewarmErrorHtml = '';
+                        if (s.prewarm_status === 'error' && s.prewarm_error) {
+                            prewarmErrorHtml = `
+                                <div style="margin-top: 8px; padding: 8px; background: #fee2e2; border-radius: 4px; border-left: 3px solid #ef4444;">
+                                    <div style="font-weight: 600; color: #991b1b; font-size: 11px; margin-bottom: 4px;">Pre-warm Error:</div>
+                                    <div style="color: #7f1d1d; font-size: 11px;">${s.prewarm_error}</div>
+                                </div>
+                            `;
+                        }
+
                         return `
                             <div class="stream-item mode-${s.mode}">
                                 <div class="stream-header">
@@ -1352,7 +1280,10 @@
                                         <div class="stream-title">${title}${lockIndicator}</div>
                                         <div style="font-size: 12px; color: #10b981; font-weight: 600;">👁 ${s.active_viewers || 0}</div>
                                     </div>
-                                    <div class="stream-mode-badge mode-${s.mode}">${modeLabel}</div>
+                                    <div style="display: flex; gap: 4px;">
+                                        <div class="stream-mode-badge mode-${s.mode}">${modeLabel}</div>
+                                        ${prewarmBadge}
+                                    </div>
                                 </div>
 
                                 <div style="display: flex; gap: 12px;">
@@ -1396,6 +1327,8 @@
                                             </div>
                                         </div>
 
+                                        ${prewarmErrorHtml}
+
                                         <div style="margin-top: 8px; padding: 8px; background: #f0fdf4; border-radius: 4px; font-size: 11px;">
                                             <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                                                 <div style="word-break: break-all; color: #666; flex: 1; min-width: 0;">${streamUrl}</div>
@@ -1405,6 +1338,7 @@
 
                                         <div class="stream-actions">
                                             ${lockButton}
+                                            ${prewarmActions}
                                             <button class="btn-delete" onclick="deleteStream('${s.stream_key}')">Delete</button>
                                         </div>
                                     </div>
@@ -1413,6 +1347,15 @@
                         `;
                     }).join('')}
                 `;
+        }
+
+        async function loadActiveStreams() {
+            const container = document.getElementById('streams-container');
+
+            try {
+                const response = await fetch(`${baseUrl}/streams`);
+                const data = await response.json();
+                renderStreamsHTML(container, data);
             } catch (error) {
                 container.innerHTML = `<div class="no-results">Error: ${error.message}</div>`;
             }
@@ -1424,14 +1367,7 @@
             }
 
             try {
-                const response = await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}`, { method: 'DELETE' });
-                const data = await response.json();
-
-                // Refresh the streams list
-                await loadActiveStreams();
-
-                // Refresh stats
-                loadStats();
+                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}`, { method: 'DELETE' });
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1439,11 +1375,7 @@
 
         async function lockStream(streamKey) {
             try {
-                const response = await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/lock`, { method: 'POST' });
-                const data = await response.json();
-
-                // Refresh the streams list
-                await loadActiveStreams();
+                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/lock`, { method: 'POST' });
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1451,11 +1383,7 @@
 
         async function unlockStream(streamKey) {
             try {
-                const response = await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/unlock`, { method: 'POST' });
-                const data = await response.json();
-
-                // Refresh the streams list
-                await loadActiveStreams();
+                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/unlock`, { method: 'POST' });
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1469,16 +1397,7 @@
             try {
                 const response = await fetch(`${baseUrl}/cleanup`, { method: 'POST' });
                 const data = await response.json();
-
                 alert(`Cleanup complete!\n\nIdle streams removed: ${data.removed_idle}\nSize-based removals: ${data.removed_size}\nCache size: ${data.cache_size_mb} MB`);
-
-                // Refresh stats
-                loadStats();
-
-                // Refresh streams if visible
-                if (document.getElementById('streams-container').classList.contains('show')) {
-                    await loadActiveStreams();
-                }
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1607,138 +1526,6 @@
             startPrewarm(mediaId, audio, subtitle, mode);
         }
 
-        // Pre-warm operations
-        let prewarmRefreshInterval = null;
-
-        async function togglePrewarmOps() {
-            const container = document.getElementById('prewarm-container');
-            const button = event.target;
-
-            if (container.classList.contains('show')) {
-                container.classList.remove('show');
-                button.textContent = 'View Pre-warm Operations';
-                if (prewarmRefreshInterval) {
-                    clearInterval(prewarmRefreshInterval);
-                    prewarmRefreshInterval = null;
-                }
-                return;
-            }
-
-            container.classList.add('show');
-            button.textContent = 'Hide Pre-warm Operations';
-
-            await loadPrewarmOps();
-
-            // Auto-refresh every 2 seconds
-            prewarmRefreshInterval = setInterval(loadPrewarmOps, 2000);
-        }
-
-        async function loadPrewarmOps() {
-            const container = document.getElementById('prewarm-container');
-
-            try {
-                const response = await fetch(`${baseUrl}/prewarm/list`);
-                const data = await response.json();
-
-                if (data.operations.length === 0) {
-                    container.innerHTML = '<div class="no-results">No pre-warm operations</div>';
-                    return;
-                }
-
-                container.innerHTML = `
-                    <div style="margin-bottom: 10px; font-weight: 600;">Pre-warm Operations: ${data.operations.length}</div>
-                    ${data.operations.map(op => renderPrewarmItem(op)).join('')}
-                `;
-            } catch (error) {
-                container.innerHTML = `<div class="no-results">Error loading pre-warm operations: ${error.message}</div>`;
-            }
-        }
-
-        function renderPrewarmItem(op) {
-            const mediaName = op.media_info?.name || 'Unknown';
-            const mediaType = op.media_info?.type || '';
-            let title = mediaName;
-
-            if (mediaType === 'Episode' && op.media_info) {
-                title = `${op.media_info.series_name} - S${op.media_info.season}E${op.media_info.episode} - ${mediaName}`;
-            }
-
-            const audioTrack = op.audio !== null ? `Audio: ${op.audio}` : 'Audio: Default';
-            const subtitleTrack = op.subtitle !== null ? `Subtitle: ${op.subtitle}` : 'No Subtitles';
-
-            const progress = op.progress_percent || 0;
-            const sizeMB = (op.bytes_cached / (1024 * 1024)).toFixed(2);
-
-            let actionButtons = '';
-            if (op.status === 'warming' || op.status === 'initializing' || op.status === 'fetching_playlist') {
-                actionButtons = `<button class="prewarm-btn prewarm-btn-cancel" onclick="cancelPrewarm('${op.prewarm_id}')">Cancel</button>`;
-            } else {
-                actionButtons = `<button class="prewarm-btn prewarm-btn-delete" onclick="deletePrewarm('${op.prewarm_id}')">Remove</button>`;
-            }
-
-            // Generate stream URL (only the relevant one for this mode)
-            const profileParam = op.profile_id && op.profile_id !== 'high' ? `&profile=${op.profile_id}` : '';
-            const streamUrl = op.mode === 'vod'
-                ? `${baseUrl}/vod.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}${profileParam}`
-                : `${baseUrl}/live.m3u8?m=${op.media_id}${op.audio !== null ? '&audio=' + op.audio : ''}${op.subtitle !== null ? '&subtitle=' + op.subtitle : ''}${profileParam}`;
-
-            const modeLabel = op.mode === 'vod' ? 'VOD' : 'Live';
-
-            return `
-                <div class="prewarm-item status-${op.status}">
-                    <div class="prewarm-header">
-                        <div class="prewarm-title">${title}</div>
-                        <div class="prewarm-status status-${op.status}">${op.status}</div>
-                    </div>
-
-                    <div style="font-size: 13px; color: #666; margin-bottom: 10px;">
-                        ${audioTrack} | ${subtitleTrack} | Mode: ${op.mode.toUpperCase()}
-                    </div>
-
-                    ${op.status !== 'error' ? `
-                    <div class="prewarm-progress">
-                        <div class="prewarm-progress-bar-bg">
-                            <div class="prewarm-progress-bar" style="width: ${progress}%">
-                                ${progress.toFixed(1)}%
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="prewarm-stats">
-                        <div class="prewarm-stat">
-                            <div class="prewarm-stat-label">Segments</div>
-                            <div class="prewarm-stat-value">${op.segments_cached} / ${op.total_segments}</div>
-                        </div>
-                        <div class="prewarm-stat">
-                            <div class="prewarm-stat-label">Size</div>
-                            <div class="prewarm-stat-value">${sizeMB} MB</div>
-                        </div>
-                        <div class="prewarm-stat">
-                            <div class="prewarm-stat-label">Time</div>
-                            <div class="prewarm-stat-value">${op.elapsed_seconds}s</div>
-                        </div>
-                    </div>
-                    ` : `
-                    <div style="color: #ef4444; font-size: 13px; margin-top: 10px;">
-                        Error: ${op.error}
-                    </div>
-                    `}
-
-                    ${progress >= 10 ? `
-                    <div style="margin-top: 15px; padding: 12px; background: #f0fdf4; border-radius: 6px; font-size: 13px;">
-                        <div style="font-weight: 600; color: #065f46; margin-bottom: 8px;">Stream URL (${modeLabel} Mode):</div>
-                        <div style="word-break: break-all; color: #666; margin-bottom: 8px;">${streamUrl}</div>
-                        <button class="btn-copy" style="padding: 6px 12px; font-size: 12px;" onclick="copyUrl('${streamUrl}', this)">Copy URL</button>
-                    </div>
-                    ` : ''}
-
-                    <div class="prewarm-actions">
-                        ${actionButtons}
-                    </div>
-                </div>
-            `;
-        }
-
         function prewarmFromUI(mediaId, mode) {
             // Get selected audio, subtitle, and profile values
             const audioSelect = document.getElementById(`audio-${mediaId}`);
@@ -1774,55 +1561,58 @@
                 });
                 const data = await response.json();
 
-                showToast(`Pre-warm started! Operation ID: ${data.prewarm_id.substring(0, 8)}...`, 'success');
-
-                // Scroll to top of page
+                showToast(`Pre-warm started! Stream: ${data.stream_key}`, 'success');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
 
-                // Show prewarm panel if not visible
-                const container = document.getElementById('prewarm-container');
+                const container = document.getElementById('streams-container');
                 if (!container.classList.contains('show')) {
-                    // Find the button and click it to expand
                     const buttons = document.querySelectorAll('.btn-control');
                     for (const btn of buttons) {
-                        if (btn.textContent.includes('Pre-warm')) {
+                        if (btn.textContent.includes('Active Streams')) {
                             btn.click();
                             break;
                         }
                     }
-                } else {
-                    // Just refresh the list
-                    await loadPrewarmOps();
                 }
+
+                // Wait for WebSocket update, then highlight the stream
+                setTimeout(() => {
+                    const streamItems = document.querySelectorAll('.stream-item');
+                    for (const item of streamItems) {
+                        const keyElement = item.querySelector('.stream-key');
+                        if (keyElement && keyElement.textContent === data.stream_key) {
+                            item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            item.classList.add('highlight');
+                            setTimeout(() => item.classList.remove('highlight'), 2000);
+                            break;
+                        }
+                    }
+                }, 500);
+                // WebSocket broadcast will update the UI automatically
             } catch (error) {
                 showToast(`Failed to start pre-warm: ${error.message}`, 'error');
             }
         }
 
-        async function cancelPrewarm(prewarmId) {
+        async function cancelPrewarm(streamKey) {
             try {
-                const response = await fetch(`${baseUrl}/prewarm/${prewarmId}/cancel`, {
+                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/prewarm/cancel`, {
                     method: 'POST'
                 });
-                const data = await response.json();
-
                 showToast('Pre-warm cancelled', 'info');
-                await loadPrewarmOps();
             } catch (error) {
                 showToast(`Failed to cancel: ${error.message}`, 'error');
             }
         }
 
-        async function deletePrewarm(prewarmId) {
+        async function dismissPrewarmError(streamKey) {
             try {
-                const response = await fetch(`${baseUrl}/prewarm/${prewarmId}`, {
+                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/prewarm`, {
                     method: 'DELETE'
                 });
-                const data = await response.json();
-
-                await loadPrewarmOps();
+                showToast('Error dismissed', 'info');
             } catch (error) {
-                showToast(`Failed to delete: ${error.message}`, 'error');
+                showToast(`Failed to dismiss error: ${error.message}`, 'error');
             }
         }
 
@@ -1865,13 +1655,19 @@
 
             if (container.classList.contains('show')) {
                 container.classList.remove('show');
-                button.textContent = 'Manage Profiles';
+                button.textContent = 'View Profiles';
+                profilesVisible = false;
+                // Hide create form when closing profiles
+                hideCreateProfileForm();
                 return;
             }
 
-            await loadProfiles();
             container.classList.add('show');
             button.textContent = 'Hide Profiles';
+            profilesVisible = true;
+
+            // Load profiles immediately
+            await loadProfiles();
         }
 
         async function loadProfiles() {
@@ -1882,11 +1678,22 @@
                 const data = await response.json();
 
                 if (data.profiles.length === 0) {
-                    container.innerHTML = '<div class="no-results">No profiles found</div>';
+                    container.innerHTML = `
+                        <div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-weight: 600; color: #333;">Quality Profiles: 0</div>
+                            <button class="btn-vod" onclick="showCreateProfileForm()">Create Profile</button>
+                        </div>
+                        <div class="no-results">No profiles found</div>
+                    `;
                     return;
                 }
 
-                container.innerHTML = data.profiles.map(profile => `
+                container.innerHTML = `
+                    <div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+                        <div style="font-weight: 600; color: #333;">Quality Profiles: ${data.profiles.length}</div>
+                        <button class="btn-vod" onclick="showCreateProfileForm()">Create Profile</button>
+                    </div>
+                ` + data.profiles.map(profile => `
                     <div class="stream-item">
                         <div class="stream-header">
                             <div>

@@ -12,7 +12,7 @@ import shutil
 import asyncio
 from pathlib import Path
 from typing import Optional, Dict, List
-from fastapi import FastAPI, HTTPException, Query, Request, Body
+from fastapi import FastAPI, HTTPException, Query, Request, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -183,6 +183,155 @@ BUILTIN_PROFILES: Dict[str, QualityProfile] = {
 
 app = FastAPI(title="Jellyfin HLS Proxy")
 
+
+class ConnectionManager:
+    """Manage WebSocket connections for real-time dashboard updates"""
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected clients"""
+        dead_connections = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                dead_connections.append(connection)
+
+        # Clean up dead connections
+        for conn in dead_connections:
+            try:
+                self.active_connections.remove(conn)
+            except:
+                pass
+
+
+manager = ConnectionManager()
+
+
+def get_stats_data():
+    """Get current stats data"""
+    profiles = get_all_profiles()
+    return {
+        "active_streams": len(active_streams),
+        "cache_size_mb": round(get_cache_size_mb(), 2),
+        "profiles_count": len(profiles)
+    }
+
+
+def get_streams_data():
+    """Get current streams data with full details"""
+    current_time = time.time()
+    streams = []
+
+    for key, info in active_streams.items():
+        cache_path = Path(settings.cache_dir) / key
+        segments_cached = 0
+        if cache_path.exists():
+            segments_cached = len(list(cache_path.glob("*.ts")))
+
+        total_segments = None
+        cache_percentage = None
+
+        if 'playlist_content' in info:
+            try:
+                playlist_text = info['playlist_content'].decode('utf-8')
+                total_segments = sum(1 for line in playlist_text.split('\n')
+                                    if line and not line.startswith('#') and '.ts' in line)
+                if total_segments > 0:
+                    cache_percentage = round((segments_cached / total_segments) * 100, 1)
+            except:
+                pass
+
+        active_viewers = 0
+        if 'viewers' in info:
+            stale_viewers = []
+            for viewer_ip, last_seen in info['viewers'].items():
+                if current_time - last_seen <= VIEWER_TIMEOUT:
+                    active_viewers += 1
+                else:
+                    stale_viewers.append(viewer_ip)
+            for viewer_ip in stale_viewers:
+                del info['viewers'][viewer_ip]
+
+        # Calculate prewarm elapsed time if prewarming
+        prewarm_elapsed = None
+        if info.get('prewarm_start_time'):
+            prewarm_elapsed = int(current_time - info['prewarm_start_time'])
+
+        # Calculate prewarm progress
+        prewarm_progress = None
+        if info.get('prewarm_status') and info.get('total_segments', 0) > 0:
+            prewarm_progress = round((info.get('segments_cached', 0) / info['total_segments']) * 100, 1)
+
+        stream_info = {
+            "stream_key": key,
+            "media_id": info['media_id'],
+            "audio": info.get('audio'),
+            "subtitle": info.get('subtitle'),
+            "mode": info.get('mode'),
+            "profile_id": info.get('profile_id', 'high'),
+            "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
+            "age_seconds": int(current_time - info.get('created_at', current_time)),
+            "cache_size_mb": round(get_stream_cache_size_mb(key), 2),
+            "segments_cached": segments_cached,
+            "total_segments": total_segments,
+            "cache_percentage": cache_percentage,
+            "active_viewers": active_viewers,
+            "locked": info.get('locked', False),
+            "prewarm_status": info.get('prewarm_status'),
+            "prewarm_elapsed_seconds": prewarm_elapsed,
+            "prewarm_progress_percent": prewarm_progress,
+            "prewarm_error": info.get('prewarm_error'),
+        }
+
+        try:
+            item_info = get_item_info(info['media_id'])
+            stream_info['media_name'] = item_info.get('Name', 'Unknown')
+            stream_info['media_type'] = item_info.get('Type', 'Unknown')
+
+            if item_info.get('ImageTags', {}).get('Primary'):
+                stream_info['media_image'] = f"{settings.jellyfin_url}/Items/{info['media_id']}/Images/Primary?maxHeight=100&quality=80"
+
+            if item_info.get('Type') == 'Episode':
+                stream_info['series_name'] = item_info.get('SeriesName')
+                stream_info['season'] = item_info.get('ParentIndexNumber')
+                stream_info['episode'] = item_info.get('IndexNumber')
+        except:
+            stream_info['media_name'] = 'Unknown'
+            stream_info['media_type'] = 'Unknown'
+
+        streams.append(stream_info)
+
+    return {
+        "streams": streams,
+        "cache_size_mb": round(get_cache_size_mb(), 2)
+    }
+
+
+async def broadcast_stats():
+    """Broadcast stats to all connected clients"""
+    await manager.broadcast({
+        "type": "stats_update",
+        **get_stats_data()
+    })
+
+
+async def broadcast_streams_update():
+    """Broadcast streams list to all connected clients"""
+    await manager.broadcast({
+        "type": "streams_update",
+        **get_streams_data()
+    })
+
+
 # Ensure cache directory exists
 Path(settings.cache_dir).mkdir(parents=True, exist_ok=True)
 
@@ -194,11 +343,8 @@ if static_dir.exists():
 # Track active streams
 active_streams = {}
 
-# Track pre-warm operations
-prewarm_operations = {}
-
 # Viewer activity timeout (if no segment request in this time, viewer is considered inactive)
-VIEWER_TIMEOUT = 60  # seconds
+VIEWER_TIMEOUT = 15  # seconds
 
 # Lock persistence file
 LOCK_FILE = Path(settings.cache_dir) / ".stream_locks.json"
@@ -288,7 +434,7 @@ def get_profile(profile_id: str) -> QualityProfile:
 
 
 async def cleanup_task():
-    """Background task to cleanup idle streams"""
+    """Background task to cleanup idle streams and broadcast updates"""
     while True:
         try:
             await asyncio.sleep(settings.cleanup_interval)
@@ -296,6 +442,10 @@ async def cleanup_task():
             removed_size = cleanup_by_size()
             if removed_idle > 0 or removed_size > 0:
                 print(f"Cleanup: removed {removed_idle} idle stream(s), {removed_size} stream(s) due to size")
+
+            # Broadcast updates to all connected clients (for viewer counts, cache progress, etc)
+            await broadcast_stats()
+            await broadcast_streams_update()
         except Exception as e:
             print(f"Error in cleanup task: {e}")
 
@@ -501,7 +651,13 @@ def recover_cached_streams():
                 'profile_id': profile_id,
                 'created_at': time.time(),
                 'last_accessed': time.time(),
-                'recovered': True  # Flag to indicate this was recovered from cache
+                'recovered': True,  # Flag to indicate this was recovered from cache
+                'prewarm_status': None,
+                'prewarm_start_time': None,
+                'segments_cached': 0,
+                'total_segments': 0,
+                'bytes_cached': 0,
+                'prewarm_error': None,
             }
 
             print(f"Recovered cached stream: {stream_key}")
@@ -684,6 +840,22 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time dashboard updates"""
+    await manager.connect(websocket)
+    try:
+        # Send initial data to this client only
+        await websocket.send_json({"type": "stats_update", **get_stats_data()})
+        await websocket.send_json({"type": "streams_update", **get_streams_data()})
+
+        # Keep connection alive
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 @app.get("/manage", response_class=HTMLResponse)
@@ -936,6 +1108,12 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
             'profile_id': profile_id,
             'last_accessed': time.time(),
             'created_at': time.time(),
+            'prewarm_status': None,
+            'prewarm_start_time': None,
+            'segments_cached': 0,
+            'total_segments': 0,
+            'bytes_cached': 0,
+            'prewarm_error': None,
         }
 
     # Update last accessed time
@@ -1051,7 +1229,10 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
         client_ip = get_client_ip(request)
         if 'viewers' not in active_streams[stream_key]:
             active_streams[stream_key]['viewers'] = {}
+        is_new_viewer = client_ip not in active_streams[stream_key]['viewers']
         active_streams[stream_key]['viewers'][client_ip] = time.time()
+        if is_new_viewer:
+            asyncio.create_task(broadcast_streams_update())
 
     # Build Jellyfin URL preserving query params and adding api_key back
     query_string = request.url.query
@@ -1121,7 +1302,10 @@ async def get_live_segment(stream_key: str, segment_file: str, request: Request)
         client_ip = get_client_ip(request)
         if 'viewers' not in active_streams[stream_key]:
             active_streams[stream_key]['viewers'] = {}
+        is_new_viewer = client_ip not in active_streams[stream_key]['viewers']
         active_streams[stream_key]['viewers'][client_ip] = time.time()
+        if is_new_viewer:
+            asyncio.create_task(broadcast_streams_update())
 
     media_id = active_streams[stream_key]['media_id']
     session_id = active_streams[stream_key]['session_id']
@@ -1153,89 +1337,7 @@ async def get_live_segment(stream_key: str, segment_file: str, request: Request)
 @app.get("/streams")
 async def list_streams():
     """List active streams with media details"""
-    current_time = time.time()
-    streams = []
-
-    for key, info in active_streams.items():
-        # Count cached segments
-        cache_path = Path(settings.cache_dir) / key
-        segments_cached = 0
-        if cache_path.exists():
-            segments_cached = len(list(cache_path.glob("*.ts")))
-
-        # Calculate total segments from playlist if available
-        total_segments = None
-        cache_percentage = None
-
-        if 'playlist_content' in info:
-            try:
-                playlist_text = info['playlist_content'].decode('utf-8')
-                # Count non-comment, non-empty lines that are segments
-                total_segments = sum(1 for line in playlist_text.split('\n')
-                                    if line and not line.startswith('#') and '.ts' in line)
-
-                if total_segments > 0:
-                    cache_percentage = round((segments_cached / total_segments) * 100, 1)
-            except:
-                pass
-
-        # Count active viewers (those who accessed segments in last VIEWER_TIMEOUT seconds)
-        active_viewers = 0
-        if 'viewers' in info:
-            # Clean up stale viewers while counting
-            stale_viewers = []
-            for viewer_ip, last_seen in info['viewers'].items():
-                if current_time - last_seen <= VIEWER_TIMEOUT:
-                    active_viewers += 1
-                else:
-                    stale_viewers.append(viewer_ip)
-            # Remove stale viewers
-            for viewer_ip in stale_viewers:
-                del info['viewers'][viewer_ip]
-
-        stream_info = {
-            "stream_key": key,
-            "media_id": info['media_id'],
-            "audio": info.get('audio'),
-            "subtitle": info.get('subtitle'),
-            "mode": info.get('mode'),
-            "profile_id": info.get('profile_id', 'high'),
-            "idle_seconds": int(current_time - info.get('last_accessed', current_time)),
-            "age_seconds": int(current_time - info.get('created_at', current_time)),
-            "cache_size_mb": round(get_stream_cache_size_mb(key), 2),
-            "segments_cached": segments_cached,
-            "total_segments": total_segments,
-            "cache_percentage": cache_percentage,
-            "active_viewers": active_viewers,
-            "locked": info.get('locked', False),
-        }
-
-        # Try to fetch media details
-        try:
-            item_info = get_item_info(info['media_id'])
-            stream_info['media_name'] = item_info.get('Name', 'Unknown')
-            stream_info['media_type'] = item_info.get('Type', 'Unknown')
-
-            # Add image if available
-            if item_info.get('ImageTags', {}).get('Primary'):
-                stream_info['media_image'] = f"{settings.jellyfin_url}/Items/{info['media_id']}/Images/Primary?maxHeight=100&quality=80"
-
-            # Add series info for episodes
-            if item_info.get('Type') == 'Episode':
-                stream_info['series_name'] = item_info.get('SeriesName')
-                stream_info['season'] = item_info.get('ParentIndexNumber')
-                stream_info['episode'] = item_info.get('IndexNumber')
-        except:
-            # If fetching fails, just use defaults
-            stream_info['media_name'] = 'Unknown'
-            stream_info['media_type'] = 'Unknown'
-
-        streams.append(stream_info)
-
-    return {
-        "streams": streams,
-        "cache_size_mb": round(get_cache_size_mb(), 2)
-    }
+    return get_streams_data()
 
 
 @app.delete("/streams/{stream_key}")
@@ -1259,6 +1361,10 @@ async def delete_stream(stream_key: str):
     locked_streams = get_locked_streams()
     save_stream_locks(locked_streams)
 
+    # Broadcast updates to connected clients
+    await broadcast_stats()
+    await broadcast_streams_update()
+
     return {"status": "deleted", "stream_key": stream_key}
 
 
@@ -1274,6 +1380,9 @@ async def lock_stream(stream_key: str):
     # Persist to disk
     locked_streams = get_locked_streams()
     save_stream_locks(locked_streams)
+
+    # Broadcast updates to connected clients
+    await broadcast_streams_update()
 
     return {"status": "locked", "stream_key": stream_key}
 
@@ -1291,6 +1400,9 @@ async def unlock_stream(stream_key: str):
     locked_streams = get_locked_streams()
     save_stream_locks(locked_streams)
 
+    # Broadcast updates to connected clients
+    await broadcast_streams_update()
+
     return {"status": "unlocked", "stream_key": stream_key}
 
 
@@ -1303,8 +1415,6 @@ async def start_prewarm(
     profile_id: Optional[str] = None
 ):
     """Start pre-warming a stream by fetching segments in advance (VOD only)"""
-    import uuid
-
     # Only allow pre-warming for VOD mode
     if mode != "vod":
         raise HTTPException(status_code=400, detail="Pre-warming is only supported for VOD mode")
@@ -1316,57 +1426,51 @@ async def start_prewarm(
     # Validate profile exists
     profile = get_profile(profile_id)
 
-    # Generate unique prewarm ID
-    prewarm_id = str(uuid.uuid4())
+    # Generate stream key
+    stream_key = f"{media_id}_{audio}_{subtitle}_vod_{profile_id}"
 
-    # Initialize prewarm operation
-    prewarm_operations[prewarm_id] = {
-        "id": prewarm_id,
-        "media_id": media_id,
-        "audio": audio,
-        "subtitle": subtitle,
-        "mode": mode,
-        "profile_id": profile_id,
-        "status": "initializing",
-        "start_time": time.time(),
-        "segments_cached": 0,
-        "total_segments": 0,
-        "bytes_cached": 0,
-        "error": None,
-        "task": None
-    }
+    # Check if stream already exists and is prewarming
+    if stream_key in active_streams and active_streams[stream_key].get('prewarm_status') not in [None, 'ready', 'error', 'cancelled']:
+        raise HTTPException(status_code=409, detail=f"Stream is already prewarming: {stream_key}")
 
     # Start async background task
-    task = asyncio.create_task(prewarm_worker(prewarm_id))
-    prewarm_operations[prewarm_id]["task"] = task
+    task = asyncio.create_task(prewarm_worker(stream_key))
 
-    return {"prewarm_id": prewarm_id, "status": "started"}
+    return {"stream_key": stream_key, "status": "started"}
 
 
-async def prewarm_worker(prewarm_id: str):
+async def prewarm_worker(stream_key: str):
     """Background worker that fetches all segments for a VOD stream"""
     try:
-        op = prewarm_operations[prewarm_id]
-        media_id = op["media_id"]
-        audio = op["audio"]
-        subtitle = op["subtitle"]
-        profile_id = op.get("profile_id", "high")
+        # Parse stream key to extract parameters
+        parts = stream_key.rsplit('_', 4)
+        if len(parts) != 5:
+            raise ValueError(f"Invalid stream_key format: {stream_key}")
+
+        media_id_str, audio_str, subtitle_str, mode, profile_id = parts
+        media_id = media_id_str
+        audio = int(audio_str) if audio_str != 'None' else None
+        subtitle = int(subtitle_str) if subtitle_str != 'None' else None
 
         # Get quality profile
         profile = get_profile(profile_id)
 
         # Initialize the stream first
-        op["status"] = "initializing"
-
-        # Start VOD stream (include profile in stream key)
-        stream_key = f"{media_id}_{audio}_{subtitle}_vod_{profile_id}"
+        if stream_key in active_streams:
+            active_streams[stream_key]['prewarm_status'] = 'initializing'
+        await broadcast_streams_update()
 
         # Check if already active
         if stream_key in active_streams:
             jellyfin_url = active_streams[stream_key]['jellyfin_url']
             # Auto-lock and mark as pre-warming even if stream exists
             active_streams[stream_key]['locked'] = True
-            active_streams[stream_key]['prewarming'] = True
+            active_streams[stream_key]['prewarm_status'] = 'initializing'
+            active_streams[stream_key]['prewarm_start_time'] = time.time()
+            active_streams[stream_key]['segments_cached'] = 0
+            active_streams[stream_key]['total_segments'] = 0
+            active_streams[stream_key]['bytes_cached'] = 0
+            active_streams[stream_key]['prewarm_error'] = None
             # Persist the auto-lock
             locked_streams = get_locked_streams()
             save_stream_locks(locked_streams)
@@ -1415,22 +1519,39 @@ async def prewarm_worker(prewarm_id: str):
                 'jellyfin_url': jellyfin_url,
                 'created_at': time.time(),
                 'last_accessed': time.time(),
-                'locked': True,  # Auto-lock pre-warming streams
-                'prewarming': True  # Mark as actively pre-warming
+                'locked': True,
+                'prewarm_status': 'initializing',
+                'prewarm_start_time': time.time(),
+                'segments_cached': 0,
+                'total_segments': 0,
+                'bytes_cached': 0,
+                'prewarm_error': None,
             }
 
             # Persist the auto-lock
             locked_streams = get_locked_streams()
             save_stream_locks(locked_streams)
 
+        await broadcast_streams_update()
+
         # Fetch the playlist to get segment list
-        op["status"] = "fetching_playlist"
+        active_streams[stream_key]['prewarm_status'] = 'fetching_playlist'
+        await broadcast_streams_update()
 
         def fetch_playlist():
             with urllib.request.urlopen(jellyfin_url, timeout=120.0) as response:
                 return response.read()
 
         content = await asyncio.to_thread(fetch_playlist)
+
+        # Check if cancelled after playlist fetch
+        if stream_key not in active_streams or active_streams[stream_key].get('prewarm_status') == 'cancelled':
+            if stream_key in active_streams:
+                active_streams[stream_key]['prewarm_status'] = None
+                active_streams[stream_key]['prewarm_start_time'] = None
+                active_streams[stream_key]['prewarm_error'] = None
+                await broadcast_streams_update()
+            return
 
         # Cache the playlist content to avoid creating multiple Jellyfin sessions
         active_streams[stream_key]['playlist_content'] = content
@@ -1461,14 +1582,20 @@ async def prewarm_worker(prewarm_id: str):
                     # Store the full relative path from hls*/session/ onwards
                     segments.append(match.group(1))
 
-        op["total_segments"] = len(segments)
-        op["status"] = "warming"
+        active_streams[stream_key]['total_segments'] = len(segments)
+        active_streams[stream_key]['prewarm_status'] = 'warming'
+        await broadcast_streams_update()
 
         # Fetch all segments
         for i, segment in enumerate(segments):
             # Check if cancelled
-            if prewarm_id not in prewarm_operations or prewarm_operations[prewarm_id]["status"] == "cancelled":
-                op["status"] = "cancelled"
+            if stream_key not in active_streams or active_streams[stream_key].get('prewarm_status') == 'cancelled':
+                # Clear the cancelled status
+                if stream_key in active_streams:
+                    active_streams[stream_key]['prewarm_status'] = None
+                    active_streams[stream_key]['prewarm_start_time'] = None
+                    active_streams[stream_key]['prewarm_error'] = None
+                    await broadcast_streams_update()
                 return
 
             # Extract just the filename for cache path (without query params)
@@ -1490,152 +1617,63 @@ async def prewarm_worker(prewarm_id: str):
 
             # Update progress
             if cache_path.exists():
-                op["segments_cached"] = i + 1
-                op["bytes_cached"] = sum(f.stat().st_size for f in (Path(settings.cache_dir) / stream_key).glob("*.ts"))
+                active_streams[stream_key]['segments_cached'] = i + 1
+                active_streams[stream_key]['bytes_cached'] = sum(f.stat().st_size for f in (Path(settings.cache_dir) / stream_key).glob("*.ts"))
 
-        # Mark as ready and remove pre-warming flag (keep lock)
-        op["status"] = "ready"
-        if stream_key in active_streams and 'prewarming' in active_streams[stream_key]:
-            del active_streams[stream_key]['prewarming']
+                # Broadcast updates every 5 segments for real-time progress
+                if (i + 1) % 5 == 0 or (i + 1) == len(segments):
+                    await broadcast_streams_update()
+                    await broadcast_stats()
+
+        # Clear prewarm status - operation complete
+        active_streams[stream_key]['prewarm_status'] = None
+        active_streams[stream_key]['prewarm_start_time'] = None
+        active_streams[stream_key]['prewarm_error'] = None
+        await broadcast_streams_update()
 
     except Exception as e:
-        if prewarm_id in prewarm_operations:
-            prewarm_operations[prewarm_id]["status"] = "error"
-            prewarm_operations[prewarm_id]["error"] = str(e)
-        # Remove pre-warming flag on error too (keep lock)
-        if stream_key in active_streams and 'prewarming' in active_streams[stream_key]:
-            del active_streams[stream_key]['prewarming']
-        print(f"Pre-warm error: {e}")
+        if stream_key in active_streams:
+            # Keep error status for display
+            active_streams[stream_key]['prewarm_status'] = 'error'
+            active_streams[stream_key]['prewarm_error'] = str(e)
+        print(f"Pre-warm error for {stream_key}: {e}")
+
+        await broadcast_streams_update()
 
 
-@app.get("/prewarm/{prewarm_id}/status")
-async def get_prewarm_status(prewarm_id: str):
-    """Get status of a pre-warm operation"""
-    if prewarm_id not in prewarm_operations:
-        raise HTTPException(status_code=404, detail="Pre-warm operation not found")
-
-    op = prewarm_operations[prewarm_id]
-
-    # Calculate elapsed time
-    elapsed = time.time() - op["start_time"]
-
-    # Get media info
-    media_info = {}
-    try:
-        item_info = get_item_info(op["media_id"])
-        media_info["name"] = item_info.get("Name", "Unknown")
-        media_info["type"] = item_info.get("Type", "Unknown")
-
-        if item_info.get('Type') == 'Episode':
-            media_info['series_name'] = item_info.get('SeriesName')
-            media_info['season'] = item_info.get('ParentIndexNumber')
-            media_info['episode'] = item_info.get('IndexNumber')
-    except:
-        media_info["name"] = "Unknown"
-        media_info["type"] = "Unknown"
-
-    # Calculate progress percentage
-    progress = 0
-    if op["total_segments"] > 0:
-        progress = (op["segments_cached"] / op["total_segments"]) * 100
-
-    return {
-        "prewarm_id": prewarm_id,
-        "media_id": op["media_id"],
-        "media_info": media_info,
-        "audio": op["audio"],
-        "subtitle": op["subtitle"],
-        "mode": op["mode"],
-        "status": op["status"],
-        "elapsed_seconds": int(elapsed),
-        "segments_cached": op["segments_cached"],
-        "total_segments": op["total_segments"],
-        "progress_percent": round(progress, 1),
-        "bytes_cached": op["bytes_cached"],
-        "error": op["error"]
-    }
-
-
-@app.post("/prewarm/{prewarm_id}/cancel")
-async def cancel_prewarm(prewarm_id: str):
+@app.post("/streams/{stream_key}/prewarm/cancel")
+async def cancel_prewarm(stream_key: str):
     """Cancel a pre-warm operation"""
-    if prewarm_id not in prewarm_operations:
-        raise HTTPException(status_code=404, detail="Pre-warm operation not found")
+    if stream_key not in active_streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
 
-    op = prewarm_operations[prewarm_id]
+    stream = active_streams[stream_key]
+    current_status = stream.get("prewarm_status")
 
-    if op["status"] in ["ready", "error", "cancelled"]:
-        return {"status": "already_finished", "current_status": op["status"]}
+    if current_status in [None]:
+        return {"status": "not_prewarming"}
 
-    # Mark as cancelled
-    op["status"] = "cancelled"
+    # Set status to cancelled so the worker can detect it
+    stream["prewarm_status"] = "cancelled"
 
-    # Cancel the task
-    if op["task"] and not op["task"].done():
-        op["task"].cancel()
+    await broadcast_streams_update()
 
     return {"status": "cancelled"}
 
 
-@app.get("/prewarm/list")
-async def list_prewarms():
-    """List all pre-warm operations with full details"""
-    operations = []
+@app.delete("/streams/{stream_key}/prewarm")
+async def clear_prewarm_status(stream_key: str):
+    """Clear prewarm status from a stream (for errors/cleanup)"""
+    if stream_key not in active_streams:
+        raise HTTPException(status_code=404, detail="Stream not found")
 
-    for prewarm_id, op in prewarm_operations.items():
-        elapsed = time.time() - op["start_time"]
-        progress = 0
-        if op["total_segments"] > 0:
-            progress = (op["segments_cached"] / op["total_segments"]) * 100
+    active_streams[stream_key]['prewarm_status'] = None
+    active_streams[stream_key]['prewarm_start_time'] = None
+    active_streams[stream_key]['prewarm_error'] = None
 
-        media_info = {}
-        try:
-            item_info = get_item_info(op["media_id"])
-            media_info["name"] = item_info.get("Name", "Unknown")
-            media_info["type"] = item_info.get("Type", "Unknown")
+    await broadcast_streams_update()
 
-            if item_info.get('Type') == 'Episode':
-                media_info['series_name'] = item_info.get('SeriesName')
-                media_info['season'] = item_info.get('ParentIndexNumber')
-                media_info['episode'] = item_info.get('IndexNumber')
-        except:
-            media_info["name"] = "Unknown"
-            media_info["type"] = "Unknown"
-
-        operations.append({
-            "prewarm_id": prewarm_id,
-            "media_id": op["media_id"],
-            "media_info": media_info,
-            "audio": op["audio"],
-            "subtitle": op["subtitle"],
-            "mode": op["mode"],
-            "profile_id": op.get("profile_id", "high"),
-            "status": op["status"],
-            "elapsed_seconds": int(elapsed),
-            "progress_percent": round(progress, 1),
-            "segments_cached": op["segments_cached"],
-            "total_segments": op["total_segments"],
-            "bytes_cached": op["bytes_cached"],
-            "error": op["error"]
-        })
-
-    return {"operations": operations}
-
-
-@app.delete("/prewarm/{prewarm_id}")
-async def delete_prewarm(prewarm_id: str):
-    """Delete a pre-warm operation from the list"""
-    if prewarm_id not in prewarm_operations:
-        raise HTTPException(status_code=404, detail="Pre-warm operation not found")
-
-    # Cancel if still running
-    op = prewarm_operations[prewarm_id]
-    if op["task"] and not op["task"].done():
-        op["task"].cancel()
-
-    del prewarm_operations[prewarm_id]
-
-    return {"status": "deleted"}
+    return {"status": "cleared"}
 
 
 @app.post("/cleanup")
@@ -1643,6 +1681,11 @@ async def manual_cleanup():
     """Manually trigger cleanup"""
     removed_idle = cleanup_idle_streams()
     removed_size = cleanup_by_size()
+
+    # Broadcast updates to connected clients
+    await broadcast_stats()
+    await broadcast_streams_update()
+
     return {
         "removed_idle": removed_idle,
         "removed_size": removed_size,
