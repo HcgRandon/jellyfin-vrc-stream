@@ -934,11 +934,11 @@
                     const response = await fetch(`${baseUrl}/media/${mediaId}/streams`);
                     const data = await response.json();
 
-                    const audioOptions = data.audio_streams.map(s =>
+                    const audioOptions = (data.audio_streams || []).map(s =>
                         `<option value="${s.index}" ${s.index === data.default_audio ? 'selected' : ''}>${s.title || s.language}</option>`
                     ).join('');
 
-                    const subtitleOptions = data.subtitle_streams.map(s =>
+                    const subtitleOptions = (data.subtitle_streams || []).map(s =>
                         `<option value="${s.index}" ${s.index === data.default_subtitle ? 'selected' : ''}>${s.title || s.language}</option>`
                     ).join('');
 
@@ -1436,11 +1436,11 @@
                 const response = await fetch(`${baseUrl}/media/${mediaId}/streams`);
                 const data = await response.json();
 
-                const audioOptions = data.audio_streams.map(s =>
+                const audioOptions = (data.audio_streams || []).map(s =>
                     `<option value="${s.index}" ${s.index === data.default_audio ? 'selected' : ''}>${s.title || s.language}</option>`
                 ).join('');
 
-                const subtitleOptions = data.subtitle_streams.map(s =>
+                const subtitleOptions = (data.subtitle_streams || []).map(s =>
                     `<option value="${s.index}" ${s.index === data.default_subtitle ? 'selected' : ''}>${s.title || s.language}</option>`
                 ).join('');
 

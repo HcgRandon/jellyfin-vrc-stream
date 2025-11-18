@@ -13,7 +13,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional, Dict, List
 from fastapi import FastAPI, HTTPException, Query, Request, Body, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -298,7 +298,7 @@ def get_streams_data():
             stream_info['media_type'] = item_info.get('Type', 'Unknown')
 
             if item_info.get('ImageTags', {}).get('Primary'):
-                stream_info['media_image'] = f"{settings.jellyfin_url}/Items/{info['media_id']}/Images/Primary?maxHeight=100&quality=80"
+                stream_info['media_image'] = f"/thumbnail/{info['media_id']}?maxHeight=100&quality=80"
 
             if item_info.get('Type') == 'Episode':
                 stream_info['series_name'] = item_info.get('SeriesName')
@@ -494,6 +494,12 @@ def get_item_info(item_id: str):
     try:
         with urllib.request.urlopen(url, timeout=10.0) as response:
             return json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8') if e.fp else ''
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch item: HTTP Error {e.code}: {e.reason}. URL: {url}. Response: {error_body[:200]}"
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch item: {e}")
 
@@ -926,7 +932,7 @@ async def get_series_episodes(series_id: str):
             item_id = item.get('Id')
             image_url = None
             if item.get('ImageTags', {}).get('Primary'):
-                image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+                image_url = f"/thumbnail/{item_id}?maxHeight=300&quality=90"
 
             episodes.append({
                 'id': item_id,
@@ -963,7 +969,7 @@ async def get_recent_media(limit: int = Query(20, description="Number of items t
 
             image_url = None
             if item.get('ImageTags', {}).get('Primary'):
-                image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+                image_url = f"/thumbnail/{item_id}?maxHeight=300&quality=90"
 
             result = {
                 'id': item_id,
@@ -1009,7 +1015,7 @@ async def search_media(q: str = Query("", description="Search query")):
             # Build image URL if item has primary image
             image_url = None
             if item.get('ImageTags', {}).get('Primary'):
-                image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?maxHeight=300&quality=90"
+                image_url = f"/thumbnail/{item_id}?maxHeight=300&quality=90"
 
             result = {
                 'id': item_id,
@@ -1781,6 +1787,43 @@ async def delete_profile(profile_id: str):
     save_custom_profiles()
 
     return {"status": "deleted", "profile_id": profile_id}
+
+
+@app.get("/thumbnail/{item_id}")
+async def get_thumbnail(
+    item_id: str,
+    maxHeight: Optional[int] = Query(300, description="Maximum height in pixels"),
+    quality: Optional[int] = Query(90, description="Image quality (1-100)")
+):
+    """Proxy endpoint for Jellyfin thumbnails to avoid exposing backend URL"""
+    # Build Jellyfin image URL with API key
+    params = {
+        'api_key': settings.jellyfin_api_key,
+        'maxHeight': str(maxHeight),
+        'quality': str(quality)
+    }
+    param_str = '&'.join([f"{k}={v}" for k, v in params.items()])
+    image_url = f"{settings.jellyfin_url}/Items/{item_id}/Images/Primary?{param_str}"
+
+    try:
+        # Fetch image from Jellyfin
+        def fetch_image():
+            with urllib.request.urlopen(image_url, timeout=10.0) as response:
+                content_type = response.headers.get('Content-Type', 'image/jpeg')
+                return response.read(), content_type
+
+        image_data, content_type = await asyncio.to_thread(fetch_image)
+
+        # Return image with proper content type and CORS headers
+        return Response(
+            content=image_data,
+            media_type=content_type,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=e.code, detail=f"Failed to fetch thumbnail: {e.reason}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch thumbnail: {e}")
 
 
 if __name__ == "__main__":
