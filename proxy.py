@@ -489,11 +489,16 @@ async def startup_event():
 
 def get_item_info(item_id: str):
     """Fetch item info from Jellyfin"""
-    url = f"{settings.jellyfin_url}/Items/{item_id}?api_key={settings.jellyfin_api_key}"
+    # Use /Items with Ids filter and fields=MediaSources (required for Jellyfin 10.11+)
+    url = f"{settings.jellyfin_url}/Items?Ids={item_id}&fields=MediaSources&api_key={settings.jellyfin_api_key}"
 
     try:
         with urllib.request.urlopen(url, timeout=10.0) as response:
-            return json.loads(response.read())
+            data = json.loads(response.read())
+            items = data.get('Items', [])
+            if not items:
+                raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+            return items[0]
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8') if e.fp else ''
         raise HTTPException(
