@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VRC Share</title>
+</head>
+<body>
+    <div id="VrcShareConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="VrcShareConfigForm">
+                    <div class="verticalSection">
+                        <h2>VRC Share</h2>
+                        <p>
+                            Adds a "VR Share Link" button to item detail pages that mints a
+                            time-limited playback link from your jellyfin-vrc-stream proxy and
+                            copies it to the clipboard.
+                        </p>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ProxyBaseUrl">Proxy Base URL</label>
+                        <input id="ProxyBaseUrl" name="ProxyBaseUrl" type="text" is="emby-input" />
+                        <div class="fieldDescription">
+                            Base URL of your jellyfin-vrc-stream proxy, e.g. https://stream.example.com
+                            (should match PUBLIC_BASE_URL on the proxy).
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="AdminApiKey">Proxy Admin API Key</label>
+                        <input id="AdminApiKey" name="AdminApiKey" type="password" is="emby-input" autocomplete="off" />
+                        <div class="fieldDescription">
+                            Must match ADMIN_API_KEY configured on the proxy. Used server-side only -
+                            never sent to the browser.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="DefaultTtlSeconds">Default link lifetime (seconds)</label>
+                        <input id="DefaultTtlSeconds" name="DefaultTtlSeconds" type="number" min="60" is="emby-input" />
+                        <div class="fieldDescription">
+                            How long a share link stays valid by default (e.g. 86400 = 24 hours).
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input id="DisableScriptInjectionMiddleware" name="DisableScriptInjectionMiddleware" type="checkbox" is="emby-checkbox" />
+                            <span>Disable the "VR Share Link" button injection</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Turns off the request-time script injection if it ever conflicts with
+                            another plugin. The plugin's API endpoints keep working either way.
+                        </div>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script type="text/javascript">
+        (function () {
+            var VrcSharePluginId = 'a3f1e6d2-8b4c-4e9a-9c3f-2d7a5b6e1234';
+
+            document.querySelector('#VrcShareConfigPage').addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(VrcSharePluginId).then(function (config) {
+                    document.querySelector('#ProxyBaseUrl').value = config.ProxyBaseUrl || '';
+                    document.querySelector('#AdminApiKey').value = config.AdminApiKey || '';
+                    document.querySelector('#DefaultTtlSeconds').value = config.DefaultTtlSeconds || 86400;
+                    document.querySelector('#DisableScriptInjectionMiddleware').checked = !!config.DisableScriptInjectionMiddleware;
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+            document.querySelector('#VrcShareConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(VrcSharePluginId).then(function (config) {
+                    config.ProxyBaseUrl = document.querySelector('#ProxyBaseUrl').value.trim();
+                    config.AdminApiKey = document.querySelector('#AdminApiKey').value;
+                    config.DefaultTtlSeconds = parseInt(document.querySelector('#DefaultTtlSeconds').value, 10) || 86400;
+                    config.DisableScriptInjectionMiddleware = document.querySelector('#DisableScriptInjectionMiddleware').checked;
+                    ApiClient.updatePluginConfiguration(VrcSharePluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+                return false;
+            });
+        })();
+    </script>
+</body>
+</html>

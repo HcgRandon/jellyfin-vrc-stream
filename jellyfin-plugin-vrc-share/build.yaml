@@ -1,0 +1,15 @@
+name: "VRC Share"
+guid: "a3f1e6d2-8b4c-4e9a-9c3f-2d7a5b6e1234"
+version: "1.0.0.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+overview: "Create time-limited VRChat share links for jellyfin-vrc-stream directly from an item's detail page."
+description: >
+  Adds a "VR Share Link" button to movie/episode detail pages (visible to
+  administrators only) that calls a jellyfin-vrc-stream proxy's /share API to
+  mint a time-limited playback link and copies it to the clipboard.
+category: "General"
+artifacts:
+  - "Jellyfin.Plugin.VrcShare.dll"
+changelog: >
+  - 1.0.0.0: Initial release - share-link creation button and config page.

@@ -9,10 +9,11 @@ Simple Jellyfin HLS Proxy for VRChat
 import re
 import time
 import shutil
+import secrets
 import asyncio
 from pathlib import Path
 from typing import Optional, Dict, List
-from fastapi import FastAPI, HTTPException, Query, Request, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Body, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -31,6 +32,9 @@ class Settings(BaseSettings):
     locked_stream_idle_timeout: int = 86400  # 24 hours for locked streams
     cleanup_interval: int = 60  # Check every 60 seconds
     max_cache_size_mb: int = 0  # Disabled by default (0 = no size-based cleanup)
+    admin_api_key: str = ""  # Required to reach admin/browsing endpoints and mint share links
+    public_base_url: str = ""  # External base URL used to build share links (falls back to request base URL)
+    default_share_ttl_seconds: int = 86400  # 24 hours
 
     class Config:
         env_file = ".env"
@@ -353,8 +357,80 @@ LOCK_FILE = Path(settings.cache_dir) / ".stream_locks.json"
 custom_profiles: Dict[str, QualityProfile] = {}
 PROFILES_FILE = Path(settings.cache_dir) / ".quality_profiles.json"
 
+# Share link storage: token -> {media_id, mode, audio, subtitle, profile, created_at, expires_at}
+shares: Dict[str, dict] = {}
+SHARES_FILE = Path(settings.cache_dir) / ".shares.json"
+
 # Startup recovery lock - prevents requests until recovery is complete
 startup_complete = asyncio.Event()
+
+
+def load_shares() -> Dict[str, dict]:
+    """Load share links from persistent storage"""
+    if not SHARES_FILE.exists():
+        return {}
+    try:
+        with open(SHARES_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading shares: {e}")
+        return {}
+
+
+def save_shares():
+    """Save share links to persistent storage"""
+    try:
+        with open(SHARES_FILE, 'w') as f:
+            json.dump(shares, f, indent=2)
+    except Exception as e:
+        print(f"Error saving shares: {e}")
+
+
+def prune_expired_shares() -> int:
+    """Remove expired share links, returns count removed"""
+    now = time.time()
+    expired = [token for token, info in shares.items() if info.get('expires_at', 0) <= now]
+    for token in expired:
+        del shares[token]
+    if expired:
+        save_shares()
+    return len(expired)
+
+
+def require_admin_key(request: Request):
+    """FastAPI dependency: require a valid admin API key (header or query param)"""
+    if not settings.admin_api_key:
+        raise HTTPException(status_code=401, detail="Admin API key is not configured on the server")
+
+    provided = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
+    if not provided or not secrets.compare_digest(provided, settings.admin_api_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing admin key")
+
+
+def _admin_key_valid(request: Request) -> bool:
+    if not settings.admin_api_key:
+        return False
+    provided = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
+    return bool(provided) and secrets.compare_digest(provided, settings.admin_api_key)
+
+
+def authorize_playback(request: Request, media_id: str, mode: str) -> str:
+    """Authorize a playback request via admin key or a valid share token.
+
+    Returns the auth query string (e.g. "token=..." or "admin_key=...") to
+    propagate into rewritten playlist URLs.
+    """
+    if _admin_key_valid(request):
+        provided = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
+        return f"admin_key={urllib.parse.quote(provided)}"
+
+    token = request.query_params.get('token')
+    if token:
+        info = shares.get(token)
+        if info and info.get('media_id') == media_id and info.get('mode') == mode and info.get('expires_at', 0) > time.time():
+            return f"token={urllib.parse.quote(token)}"
+
+    raise HTTPException(status_code=401, detail="Valid share token or admin key required")
 
 
 def load_stream_locks():
@@ -440,8 +516,11 @@ async def cleanup_task():
             await asyncio.sleep(settings.cleanup_interval)
             removed_idle = cleanup_idle_streams()
             removed_size = cleanup_by_size()
+            removed_shares = prune_expired_shares()
             if removed_idle > 0 or removed_size > 0:
                 print(f"Cleanup: removed {removed_idle} idle stream(s), {removed_size} stream(s) due to size")
+            if removed_shares > 0:
+                print(f"Cleanup: removed {removed_shares} expired share link(s)")
 
             # Broadcast updates to all connected clients (for viewer counts, cache progress, etc)
             await broadcast_stats()
@@ -453,12 +532,22 @@ async def cleanup_task():
 @app.on_event("startup")
 async def startup_event():
     """Start background cleanup task and recover cached streams"""
-    global custom_profiles
+    global custom_profiles, shares
+
+    if not settings.admin_api_key:
+        print("WARNING: ADMIN_API_KEY is not set - admin/browsing endpoints and share creation are disabled. "
+              "Playback endpoints will refuse all requests until shares are created via /share with an admin key.")
 
     # Load custom quality profiles
     custom_profiles = load_custom_profiles()
     if custom_profiles:
         print(f"Loaded {len(custom_profiles)} custom quality profile(s) from storage")
+
+    # Load share links from persistent storage
+    shares = load_shares()
+    removed_expired = prune_expired_shares()
+    if shares or removed_expired:
+        print(f"Loaded {len(shares)} active share link(s) from storage ({removed_expired} expired removed)")
 
     # Load locked streams from persistent storage
     locked_streams = load_stream_locks()
@@ -779,7 +868,7 @@ def get_client_ip(request: Request) -> str:
     return request.client.host if request.client else 'unknown'
 
 
-def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
+def rewrite_playlist_vod(content: bytes, media_id: str, auth_query: str = "") -> str:
     """Rewrite VOD playlist URLs - preserves query params but strips api_key for security"""
     text = content.decode('utf-8')
     lines = text.split('\n')
@@ -795,6 +884,13 @@ def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
             return f"{path}?{'&'.join(params)}"
         return path
 
+    def add_auth(url: str) -> str:
+        """Append the playback auth credential so the player's own fetches stay authorized"""
+        if not auth_query:
+            return url
+        separator = '&' if '?' in url else '?'
+        return f"{url}{separator}{auth_query}"
+
     for line in lines:
         if line and not line.startswith('#'):
             # Rewrite .m3u8 playlist references, stripping hls*/session/ prefix like we do for .ts
@@ -803,7 +899,7 @@ def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
             if m3u8_match and '.m3u8' in line:
                 playlist_path = m3u8_match.group(1)  # Strip hls*/session/ prefix
                 playlist_path = strip_api_key(playlist_path)  # Strip api_key
-                new_lines.append(f"/vod/{media_id}/{playlist_path}")
+                new_lines.append(add_auth(f"/vod/{media_id}/{playlist_path}"))
                 continue
 
             # VOD segments have query params we need to preserve (but not api_key)
@@ -812,14 +908,14 @@ def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
             if ts_match:
                 segment_path = ts_match.group(1)  # Includes query params, strips hls*/session/ prefix
                 segment_path = strip_api_key(segment_path)  # Strip api_key
-                new_lines.append(f"/vod/{media_id}/{segment_path}")
+                new_lines.append(add_auth(f"/vod/{media_id}/{segment_path}"))
                 continue
         new_lines.append(line)
 
     return '\n'.join(new_lines)
 
 
-def rewrite_playlist_live(content: bytes, stream_key: str) -> str:
+def rewrite_playlist_live(content: bytes, stream_key: str, auth_query: str = "") -> str:
     """Rewrite live playlist URLs - use stream_key to distinguish different audio/subtitle combos"""
     text = content.decode('utf-8')
     lines = text.split('\n')
@@ -831,7 +927,10 @@ def rewrite_playlist_live(content: bytes, stream_key: str) -> str:
             match = re.search(r'hls\d*/[^/]+/([^/?]+\.ts)', line)
             if match:
                 segment_file = match.group(1)
-                new_lines.append(f"/live/{stream_key}/{segment_file}")
+                url = f"/live/{stream_key}/{segment_file}"
+                if auth_query:
+                    url = f"{url}?{auth_query}"
+                new_lines.append(url)
                 continue
         new_lines.append(line)
 
@@ -878,7 +977,7 @@ async def management_portal():
     raise HTTPException(status_code=404, detail="Management portal not found")
 
 
-@app.get("/media/{media_id}/streams")
+@app.get("/media/{media_id}/streams", dependencies=[Depends(require_admin_key)])
 async def get_media_streams(media_id: str):
     """Get available audio and subtitle streams for a media item"""
     try:
@@ -920,7 +1019,7 @@ async def get_media_streams(media_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to fetch streams: {e}")
 
 
-@app.get("/series/{series_id}/episodes")
+@app.get("/series/{series_id}/episodes", dependencies=[Depends(require_admin_key)])
 async def get_series_episodes(series_id: str):
     """Get all episodes for a series"""
     url = f"{settings.jellyfin_url}/Shows/{series_id}/Episodes?Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
@@ -955,7 +1054,7 @@ async def get_series_episodes(series_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to fetch episodes: {e}")
 
 
-@app.get("/recent")
+@app.get("/recent", dependencies=[Depends(require_admin_key)])
 async def get_recent_media(limit: int = Query(20, description="Number of items to return")):
     """Get recently added media"""
     url = f"{settings.jellyfin_url}/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&Limit={limit}&api_key={settings.jellyfin_api_key}"
@@ -995,7 +1094,7 @@ async def get_recent_media(limit: int = Query(20, description="Number of items t
         raise HTTPException(status_code=500, detail=f"Failed to fetch recent media: {e}")
 
 
-@app.get("/search")
+@app.get("/search", dependencies=[Depends(require_admin_key)])
 async def search_media(q: str = Query("", description="Search query")):
     """Search Jellyfin media library"""
     if not q:
@@ -1047,10 +1146,13 @@ async def search_media(q: str = Query("", description="Search query")):
         raise HTTPException(status_code=500, detail=f"Search failed: {e}")
 
 
-async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[int], mode: str, profile_id: Optional[str] = None):
+async def _get_stream_playlist(request: Request, m: str, audio: Optional[int], subtitle: Optional[int], mode: str, profile_id: Optional[str] = None):
     """Common playlist logic for both VOD and live modes"""
     # Wait for startup/recovery to complete
     await startup_complete.wait()
+
+    # Authorize via admin key or a valid share token scoped to this media item + mode
+    auth_query = authorize_playback(request, m, mode)
 
     # Get quality profile (defaults to 'high' if not specified)
     if not profile_id:
@@ -1160,9 +1262,9 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
 
     # Rewrite based on mode
     if mode == "vod":
-        rewritten = rewrite_playlist_vod(content, m)
+        rewritten = rewrite_playlist_vod(content, m, auth_query)
     else:
-        rewritten = rewrite_playlist_live(content, stream_key)
+        rewritten = rewrite_playlist_live(content, stream_key, auth_query)
 
     return PlainTextResponse(
         rewritten,
@@ -1173,24 +1275,26 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
 
 @app.get("/vod.m3u8")
 async def get_vod_playlist(
+    request: Request,
     m: str = Query(..., description="Media ID"),
     audio: Optional[int] = Query(None, description="Audio stream index"),
     subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
     profile: Optional[str] = Query(None, description="Quality profile ID (defaults to 'high')"),
 ):
     """Get VOD HLS playlist (seekable, full video)"""
-    return await _get_stream_playlist(m, audio, subtitle, "vod", profile)
+    return await _get_stream_playlist(request, m, audio, subtitle, "vod", profile)
 
 
 @app.get("/live.m3u8")
 async def get_live_playlist(
+    request: Request,
     m: str = Query(..., description="Media ID"),
     audio: Optional[int] = Query(None, description="Audio stream index"),
     subtitle: Optional[int] = Query(None, description="Subtitle stream index"),
     profile: Optional[str] = Query(None, description="Quality profile ID (defaults to 'high')"),
 ):
     """Get live HLS playlist (real-time streaming)"""
-    return await _get_stream_playlist(m, audio, subtitle, "live", profile)
+    return await _get_stream_playlist(request, m, audio, subtitle, "live", profile)
 
 
 @app.get("/vod/{media_id}/{segment_path:path}")
@@ -1198,6 +1302,9 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
     """Get VOD segment with query params preserved"""
     # Wait for startup/recovery to complete
     await startup_complete.wait()
+
+    # Authorize via admin key or a valid share token scoped to this media item + mode
+    auth_query = authorize_playback(request, media_id, "vod")
 
     # Parse audio/subtitle from query params to find the correct stream
     query_params = dict(request.query_params)
@@ -1263,7 +1370,7 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
                     return response.read()
 
             content = await asyncio.to_thread(fetch_playlist)
-            rewritten = rewrite_playlist_vod(content, media_id)
+            rewritten = rewrite_playlist_vod(content, media_id, auth_query)
 
             return PlainTextResponse(
                 rewritten,
@@ -1305,6 +1412,9 @@ async def get_live_segment(stream_key: str, segment_file: str, request: Request)
     if stream_key not in active_streams or 'session_id' not in active_streams[stream_key]:
         raise HTTPException(status_code=404, detail="Stream not found or not initialized")
 
+    # Authorize via admin key or a valid share token scoped to this media item + mode
+    authorize_playback(request, active_streams[stream_key]['media_id'], "live")
+
     # Update last accessed time
     active_streams[stream_key]['last_accessed'] = time.time()
 
@@ -1345,13 +1455,13 @@ async def get_live_segment(stream_key: str, segment_file: str, request: Request)
     )
 
 
-@app.get("/streams")
+@app.get("/streams", dependencies=[Depends(require_admin_key)])
 async def list_streams():
     """List active streams with media details"""
     return get_streams_data()
 
 
-@app.delete("/streams/{stream_key}")
+@app.delete("/streams/{stream_key}", dependencies=[Depends(require_admin_key)])
 async def delete_stream(stream_key: str):
     """Manually stop and cleanup a stream"""
     if stream_key not in active_streams:
@@ -1379,7 +1489,7 @@ async def delete_stream(stream_key: str):
     return {"status": "deleted", "stream_key": stream_key}
 
 
-@app.post("/streams/{stream_key}/lock")
+@app.post("/streams/{stream_key}/lock", dependencies=[Depends(require_admin_key)])
 async def lock_stream(stream_key: str):
     """Lock a stream to prevent cleanup (24 hour idle timeout instead of 5 min)"""
     if stream_key not in active_streams:
@@ -1398,7 +1508,7 @@ async def lock_stream(stream_key: str):
     return {"status": "locked", "stream_key": stream_key}
 
 
-@app.post("/streams/{stream_key}/unlock")
+@app.post("/streams/{stream_key}/unlock", dependencies=[Depends(require_admin_key)])
 async def unlock_stream(stream_key: str):
     """Unlock a stream to allow normal cleanup (5 min idle timeout)"""
     if stream_key not in active_streams:
@@ -1417,7 +1527,7 @@ async def unlock_stream(stream_key: str):
     return {"status": "unlocked", "stream_key": stream_key}
 
 
-@app.post("/prewarm/start")
+@app.post("/prewarm/start", dependencies=[Depends(require_admin_key)])
 async def start_prewarm(
     media_id: str,
     audio: Optional[int] = None,
@@ -1652,7 +1762,7 @@ async def prewarm_worker(stream_key: str):
         await broadcast_streams_update()
 
 
-@app.post("/streams/{stream_key}/prewarm/cancel")
+@app.post("/streams/{stream_key}/prewarm/cancel", dependencies=[Depends(require_admin_key)])
 async def cancel_prewarm(stream_key: str):
     """Cancel a pre-warm operation"""
     if stream_key not in active_streams:
@@ -1672,7 +1782,7 @@ async def cancel_prewarm(stream_key: str):
     return {"status": "cancelled"}
 
 
-@app.delete("/streams/{stream_key}/prewarm")
+@app.delete("/streams/{stream_key}/prewarm", dependencies=[Depends(require_admin_key)])
 async def clear_prewarm_status(stream_key: str):
     """Clear prewarm status from a stream (for errors/cleanup)"""
     if stream_key not in active_streams:
@@ -1687,7 +1797,7 @@ async def clear_prewarm_status(stream_key: str):
     return {"status": "cleared"}
 
 
-@app.post("/cleanup")
+@app.post("/cleanup", dependencies=[Depends(require_admin_key)])
 async def manual_cleanup():
     """Manually trigger cleanup"""
     removed_idle = cleanup_idle_streams()
@@ -1704,7 +1814,7 @@ async def manual_cleanup():
     }
 
 
-@app.get("/profiles")
+@app.get("/profiles", dependencies=[Depends(require_admin_key)])
 async def list_profiles():
     """List all quality profiles (built-in presets + custom)"""
     all_profiles = get_all_profiles()
@@ -1733,7 +1843,7 @@ async def list_profiles():
     return {"profiles": profiles_list}
 
 
-@app.post("/profiles")
+@app.post("/profiles", dependencies=[Depends(require_admin_key)])
 async def create_profile(profile: QualityProfile):
     """Create a new custom quality profile"""
     # Prevent overwriting built-in presets
@@ -1754,7 +1864,7 @@ async def create_profile(profile: QualityProfile):
     return {"status": "created", "profile": profile.model_dump()}
 
 
-@app.put("/profiles/{profile_id}")
+@app.put("/profiles/{profile_id}", dependencies=[Depends(require_admin_key)])
 async def update_profile(profile_id: str, profile: QualityProfile):
     """Update an existing custom quality profile"""
     # Prevent modifying built-in presets
@@ -1776,7 +1886,7 @@ async def update_profile(profile_id: str, profile: QualityProfile):
     return {"status": "updated", "profile": profile.model_dump()}
 
 
-@app.delete("/profiles/{profile_id}")
+@app.delete("/profiles/{profile_id}", dependencies=[Depends(require_admin_key)])
 async def delete_profile(profile_id: str):
     """Delete a custom quality profile"""
     # Prevent deleting built-in presets
@@ -1794,7 +1904,79 @@ async def delete_profile(profile_id: str):
     return {"status": "deleted", "profile_id": profile_id}
 
 
-@app.get("/thumbnail/{item_id}")
+class ShareRequest(BaseModel):
+    media_id: str
+    mode: str = "vod"
+    audio: Optional[int] = None
+    subtitle: Optional[int] = None
+    profile: Optional[str] = None
+    ttl_seconds: Optional[int] = None
+
+
+@app.post("/share", dependencies=[Depends(require_admin_key)])
+async def create_share(share: ShareRequest, request: Request):
+    """Create a time-limited share link for a single media item"""
+    if share.mode not in ("vod", "live"):
+        raise HTTPException(status_code=400, detail="mode must be 'vod' or 'live'")
+
+    ttl = share.ttl_seconds if share.ttl_seconds and share.ttl_seconds > 0 else settings.default_share_ttl_seconds
+
+    token = secrets.token_urlsafe(24)
+    now = time.time()
+    shares[token] = {
+        'media_id': share.media_id,
+        'mode': share.mode,
+        'audio': share.audio,
+        'subtitle': share.subtitle,
+        'profile': share.profile,
+        'created_at': now,
+        'expires_at': now + ttl,
+    }
+    save_shares()
+
+    base_url = settings.public_base_url.rstrip('/') if settings.public_base_url else str(request.base_url).rstrip('/')
+    url_params = [f"m={urllib.parse.quote(share.media_id)}", f"token={urllib.parse.quote(token)}"]
+    if share.audio is not None:
+        url_params.append(f"audio={share.audio}")
+    if share.subtitle is not None:
+        url_params.append(f"subtitle={share.subtitle}")
+    if share.profile:
+        url_params.append(f"profile={urllib.parse.quote(share.profile)}")
+    url = f"{base_url}/{share.mode}.m3u8?{'&'.join(url_params)}"
+
+    return {
+        "token": token,
+        "url": url,
+        "media_id": share.media_id,
+        "mode": share.mode,
+        "created_at": now,
+        "expires_at": shares[token]['expires_at'],
+    }
+
+
+@app.get("/shares", dependencies=[Depends(require_admin_key)])
+async def list_shares():
+    """List active (non-expired) share links"""
+    prune_expired_shares()
+    return {
+        "shares": [
+            {"token": token, **info}
+            for token, info in shares.items()
+        ]
+    }
+
+
+@app.delete("/share/{token}", dependencies=[Depends(require_admin_key)])
+async def revoke_share(token: str):
+    """Revoke a share link early"""
+    if token not in shares:
+        raise HTTPException(status_code=404, detail="Share not found")
+    del shares[token]
+    save_shares()
+    return {"status": "revoked", "token": token}
+
+
+@app.get("/thumbnail/{item_id}", dependencies=[Depends(require_admin_key)])
 async def get_thumbnail(
     item_id: str,
     maxHeight: Optional[int] = Query(300, description="Maximum height in pixels"),
