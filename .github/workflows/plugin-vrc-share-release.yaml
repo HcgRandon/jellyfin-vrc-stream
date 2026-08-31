@@ -103,7 +103,11 @@ jobs:
               "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
           }
 
-          manifest[0]["versions"].insert(0, entry)
+          # Replace any existing entry for this version (e.g. a re-run of this
+          # workflow for the same tag) instead of appending a duplicate.
+          versions = [v for v in manifest[0]["versions"] if v.get("version") != entry["version"]]
+          versions.insert(0, entry)
+          manifest[0]["versions"] = versions
 
           with open(manifest_path, "w") as f:
               json.dump(manifest, f, indent=2)
