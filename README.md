@@ -1,6 +1,6 @@
 # Jellyfin HLS Proxy for VRChat
 
-[![Docker Build](https://github.com/HcgRandon/jellyfin-vrc-stream/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/HcgRandon/jellyfin-vrc-stream/actions/workflows/docker-publish.yml)
+[![Docker Build](https://github.com/C9Glax/jellyfin-vrc-stream/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/C9Glax/jellyfin-vrc-stream/actions/workflows/docker-publish.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **Note:** Almost all of this repo was vibe-coded to get a quick working POC. Terminology and comments might be weird and nonsensical, but it is functional. I plan to clean this up properly later.
@@ -181,11 +181,11 @@ Stop and cleanup a specific stream by its stream_key (from `/streams` endpoint).
 
 **Using pre-built image from GitHub Container Registry:**
 ```bash
-docker pull ghcr.io/hcgrandon/jellyfin-vrc-stream:latest
+docker pull ghcr.io/c9glax/jellyfin-vrc-stream:latest
 docker run -p 8000:8000 \
   -e JELLYFIN_URL=http://jellyfin:8096 \
   -e JELLYFIN_API_KEY=your_key \
-  ghcr.io/hcgrandon/jellyfin-vrc-stream:latest
+  ghcr.io/c9glax/jellyfin-vrc-stream:latest
 ```
 
 **Or build locally:**
