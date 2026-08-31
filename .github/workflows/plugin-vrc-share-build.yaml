@@ -1,0 +1,30 @@
+name: "🔨 Build VRC Share Plugin"
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "jellyfin-plugin-vrc-share/**"
+  pull_request:
+    paths:
+      - "jellyfin-plugin-vrc-share/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jellyfin-plugin-vrc-share
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build
+        run: dotnet build -c Release

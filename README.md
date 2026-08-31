@@ -223,23 +223,17 @@ kubectl get svc jellyfin-vrc-stream-service
 - Jellyfin 10.11.x
 - This proxy running with `ADMIN_API_KEY` set
 
-### Build
-```bash
-cd jellyfin-plugin-vrc-share
-dotnet build -c Release
-```
-The compiled plugin is at `Jellyfin.Plugin.VrcShare/bin/Release/net9.0/Jellyfin.Plugin.VrcShare.dll`.
-
 ### Install
-1. Copy `Jellyfin.Plugin.VrcShare.dll` into a new folder under Jellyfin's plugin directory, e.g. `<jellyfin-config>/plugins/VRC Share_1.0.0.0/`.
-2. Restart Jellyfin.
-3. In the admin dashboard, go to **Plugins → VRC Share** and set:
-   - **Proxy Base URL** - e.g. `https://stream.example.com`
-   - **Proxy Admin API Key** - must match `ADMIN_API_KEY` on the proxy
-   - **Default link lifetime** - defaults to 86400 seconds (24h)
-4. Open any movie or episode as an administrator - a **VR Share Link** button appears next to Play. Click it, then paste the copied URL into your VRChat video player.
+The plugin is distributed as a Jellyfin **plugin repository**, following the
+layout from [jellyfin/jellyfin-plugin-template](https://github.com/jellyfin/jellyfin-plugin-template) - add it once and install/update it from Jellyfin's own Plugins UI, like any catalog plugin:
 
-See [`jellyfin-plugin-vrc-share/README.md`](jellyfin-plugin-vrc-share/README.md) for details on how the button is injected into the web UI.
+1. In Jellyfin, go to **Dashboard → Plugins → Repositories → Add Repository** and add:
+   - **Repository URL:** `https://raw.githubusercontent.com/C9Glax/jellyfin-vrc-stream/main/jellyfin-plugin-vrc-share/manifest.json`
+2. Go to **Catalog**, find **VRC Share** under General, install it, and restart Jellyfin.
+3. In **Plugins → VRC Share**, set **Proxy Base URL** and **Proxy Admin API Key** (matching `ADMIN_API_KEY` above).
+4. Open any movie or episode as an administrator - a **VR Share Link** button appears next to Play.
+
+Building from source and installing the DLL by hand is also documented in [`jellyfin-plugin-vrc-share/README.md`](jellyfin-plugin-vrc-share/README.md), which also covers how the button is injected into the web UI and how releases/the manifest are published.
 
 ## VRChat Usage
 

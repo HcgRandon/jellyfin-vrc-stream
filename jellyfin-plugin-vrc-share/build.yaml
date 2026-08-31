@@ -9,6 +9,7 @@ description: >
   administrators only) that calls a jellyfin-vrc-stream proxy's /share API to
   mint a time-limited playback link and copies it to the clipboard.
 category: "General"
+owner: "C9Glax"
 artifacts:
   - "Jellyfin.Plugin.VrcShare.dll"
 changelog: >
