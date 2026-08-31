@@ -1,0 +1,116 @@
+name: "🚀 Release VRC Share Plugin"
+
+# Triggered by publishing a GitHub Release whose tag looks like "plugin-vX.Y.Z.W"
+# (e.g. plugin-v1.0.0.0) - separate from the proxy's own Docker releases so the
+# two don't trigger each other. Builds the plugin, uploads a zip to the release,
+# and appends the new version to manifest.json so it shows up for anyone who has
+# added this repo's manifest.json URL as a Jellyfin plugin repository.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    if: startsWith(github.event.release.tag_name, 'plugin-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jellyfin-plugin-vrc-share
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Extract version from tag
+        id: version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG_NAME#plugin-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set assembly version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sed -i "s#<AssemblyVersion>.*</AssemblyVersion>#<AssemblyVersion>${VERSION}</AssemblyVersion>#" Jellyfin.Plugin.VrcShare/Jellyfin.Plugin.VrcShare.csproj
+          sed -i "s#<FileVersion>.*</FileVersion>#<FileVersion>${VERSION}</FileVersion>#" Jellyfin.Plugin.VrcShare/Jellyfin.Plugin.VrcShare.csproj
+
+      - name: Build
+        run: dotnet build -c Release
+
+      - name: Package
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ZIP_NAME="Jellyfin.Plugin.VrcShare_${VERSION}.zip"
+          (cd Jellyfin.Plugin.VrcShare/bin/Release/net9.0 && zip "$ZIP_NAME" Jellyfin.Plugin.VrcShare.dll)
+          mv "Jellyfin.Plugin.VrcShare/bin/Release/net9.0/$ZIP_NAME" "./$ZIP_NAME"
+          CHECKSUM=$(md5sum "$ZIP_NAME" | cut -d ' ' -f1)
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZIP_PATH: jellyfin-plugin-vrc-share/${{ steps.package.outputs.zip_name }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$ZIP_PATH" --repo "${{ github.repository }}"
+
+      - name: Update manifest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+          REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          CHANGELOG: ${{ github.event.release.body }}
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          manifest_path = "manifest.json"
+          with open(manifest_path) as f:
+              manifest = json.load(f)
+
+          entry = {
+              "version": os.environ["VERSION"],
+              "changelog": os.environ.get("CHANGELOG") or "See GitHub release notes.",
+              "targetAbi": "10.11.0.0",
+              "sourceUrl": "https://github.com/{repo}/releases/download/{tag}/{zip}".format(
+                  repo=os.environ["REPO"],
+                  tag=os.environ["TAG_NAME"],
+                  zip=os.environ["ZIP_NAME"],
+              ),
+              "checksum": os.environ["CHECKSUM"],
+              "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+          }
+
+          manifest[0]["versions"].insert(0, entry)
+
+          with open(manifest_path, "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          PYEOF
+
+      - name: Commit manifest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "Release VRC Share plugin ${VERSION}"
+          git push origin HEAD:main

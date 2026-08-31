@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "a3f1e6d2-8b4c-4e9a-9c3f-2d7a5b6e1234",
+    "name": "VRC Share",
+    "overview": "Create time-limited VRChat share links for jellyfin-vrc-stream directly from an item's detail page.",
+    "description": "Adds a \"VR Share Link\" button to movie/episode detail pages (visible to administrators only) that calls a jellyfin-vrc-stream proxy's /share API to mint a time-limited playback link and copies it to the clipboard.",
+    "owner": "C9Glax",
+    "category": "General",
+    "versions": []
+  }
+]
