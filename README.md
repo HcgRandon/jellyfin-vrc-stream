@@ -10,15 +10,7 @@ A simple FastAPI proxy service that:
 - **Fans out to multiple clients** - All viewers watch the same stream
 - **Hides API key** - Clients connect without exposing Jellyfin credentials
 - **Time-limited share links** - Playback requires a per-item token that expires, instead of a permanent unauthenticated URL
-
-## ⚠️ Breaking change: access control
-
-Every endpoint now requires a credential:
-
-- **Admin/browsing endpoints** (`/search`, `/recent`, `/media/*/streams`, `/streams`, `/profiles`, `/thumbnail/*`, `/cleanup`, share management) require the `ADMIN_API_KEY` env var to be set, and requests must send it as either the `X-Admin-Key` header or an `admin_key` query param.
-- **Playback endpoints** (`/vod.m3u8`, `/live.m3u8`, and their segment routes) require either the admin key, or a valid, non-expired **share token** created via `POST /share`. Segment/sub-playlist URLs embedded in the returned playlist automatically carry the same credential, so players don't need to do anything extra.
-
-If `ADMIN_API_KEY` is left unset, all of the above endpoints refuse every request - the proxy is unusable until it's configured. See `.env.example`.
+- **One-click links from Jellyfin** - The companion [Jellyfin plugin](jellyfin-plugin-vrc-share/) adds a button to each item's page that creates and copies a share link for you
 
 ## How It Works
 
@@ -35,6 +27,8 @@ If `ADMIN_API_KEY` is left unset, all of the above endpoints refuse every reques
 - ✅ **Automatic stream selection** - Prefers Japanese audio + English subs
 - ✅ **Cached delivery** - Fast segment serving from local cache
 - ✅ **Simple** - No custom transcoding, just proxying Jellyfin
+- ✅ **Time-limited, per-item links** - No more permanent, guessable URLs to your whole library
+- ✅ **One click from Jellyfin** - The [Jellyfin plugin](jellyfin-plugin-vrc-share/) creates and copies a share link straight from the item page
 
 ## API Endpoints
 
@@ -220,6 +214,32 @@ kubectl --kubeconfig=/path/to/kubeconfig apply -f deployment.yaml
 ```bash
 kubectl get svc jellyfin-vrc-stream-service
 ```
+
+## Jellyfin Plugin (VR Share Link button)
+
+[`jellyfin-plugin-vrc-share/`](jellyfin-plugin-vrc-share/) is a companion Jellyfin plugin that adds a **VR Share Link** button to every movie/episode detail page. Click it as an administrator and it creates a share link on this proxy and copies it to your clipboard - no manual ID lookup or `curl`/dashboard step needed.
+
+### Requirements
+- Jellyfin 10.11.x
+- This proxy running with `ADMIN_API_KEY` set
+
+### Build
+```bash
+cd jellyfin-plugin-vrc-share
+dotnet build -c Release
+```
+The compiled plugin is at `Jellyfin.Plugin.VrcShare/bin/Release/net9.0/Jellyfin.Plugin.VrcShare.dll`.
+
+### Install
+1. Copy `Jellyfin.Plugin.VrcShare.dll` into a new folder under Jellyfin's plugin directory, e.g. `<jellyfin-config>/plugins/VRC Share_1.0.0.0/`.
+2. Restart Jellyfin.
+3. In the admin dashboard, go to **Plugins → VRC Share** and set:
+   - **Proxy Base URL** - e.g. `https://stream.example.com`
+   - **Proxy Admin API Key** - must match `ADMIN_API_KEY` on the proxy
+   - **Default link lifetime** - defaults to 86400 seconds (24h)
+4. Open any movie or episode as an administrator - a **VR Share Link** button appears next to Play. Click it, then paste the copied URL into your VRChat video player.
+
+See [`jellyfin-plugin-vrc-share/README.md`](jellyfin-plugin-vrc-share/README.md) for details on how the button is injected into the web UI.
 
 ## VRChat Usage
 
