@@ -26,13 +26,16 @@ import json
 
 class Settings(BaseSettings):
     jellyfin_url: str = "http://jellyfin:8096"
+    # Doubles as the proxy's own admin credential (X-Admin-Key / admin_key):
+    # only someone who already has Jellyfin admin access to generate this key
+    # should be granted access to the proxy's admin/browsing endpoints or be
+    # able to mint share links, so reusing it avoids managing a second secret.
     jellyfin_api_key: str = ""
     cache_dir: str = "/tmp/hls-cache"
     stream_idle_timeout: int = 300  # 5 minutes
     locked_stream_idle_timeout: int = 86400  # 24 hours for locked streams
     cleanup_interval: int = 60  # Check every 60 seconds
     max_cache_size_mb: int = 0  # Disabled by default (0 = no size-based cleanup)
-    admin_api_key: str = ""  # Required to reach admin/browsing endpoints and mint share links
     public_base_url: str = ""  # External base URL used to build share links (falls back to request base URL)
     default_share_ttl_seconds: int = 86400  # 24 hours
 
@@ -398,20 +401,20 @@ def prune_expired_shares() -> int:
 
 
 def require_admin_key(request: Request):
-    """FastAPI dependency: require a valid admin API key (header or query param)"""
-    if not settings.admin_api_key:
-        raise HTTPException(status_code=401, detail="Admin API key is not configured on the server")
+    """FastAPI dependency: require the Jellyfin API key (header or query param) as an admin credential"""
+    if not settings.jellyfin_api_key:
+        raise HTTPException(status_code=401, detail="JELLYFIN_API_KEY is not configured on the server")
 
     provided = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
-    if not provided or not secrets.compare_digest(provided, settings.admin_api_key):
+    if not provided or not secrets.compare_digest(provided, settings.jellyfin_api_key):
         raise HTTPException(status_code=401, detail="Invalid or missing admin key")
 
 
 def _admin_key_valid(request: Request) -> bool:
-    if not settings.admin_api_key:
+    if not settings.jellyfin_api_key:
         return False
     provided = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
-    return bool(provided) and secrets.compare_digest(provided, settings.admin_api_key)
+    return bool(provided) and secrets.compare_digest(provided, settings.jellyfin_api_key)
 
 
 def authorize_playback(request: Request, media_id: str, mode: str) -> str:
@@ -534,8 +537,8 @@ async def startup_event():
     """Start background cleanup task and recover cached streams"""
     global custom_profiles, shares
 
-    if not settings.admin_api_key:
-        print("WARNING: ADMIN_API_KEY is not set - admin/browsing endpoints and share creation are disabled. "
+    if not settings.jellyfin_api_key:
+        print("WARNING: JELLYFIN_API_KEY is not set - admin/browsing endpoints and share creation are disabled. "
               "Playback endpoints will refuse all requests until shares are created via /share with an admin key.")
 
     # Load custom quality profiles

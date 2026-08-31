@@ -19,7 +19,7 @@ Uses Jellyfin's `main.m3u8` endpoint for full video playback with seeking suppor
 curl "http://proxy:8000/vod.m3u8?m=abc123&token=<share_token>"
 
 # Manual selection using the admin key
-curl "http://proxy:8000/vod.m3u8?m=abc123&audio=2&subtitle=5&admin_key=$ADMIN_API_KEY"
+curl "http://proxy:8000/vod.m3u8?m=abc123&audio=2&subtitle=5&admin_key=$JELLYFIN_API_KEY"
 ```
 
 ### Live Streaming Mode
@@ -43,7 +43,7 @@ curl "http://proxy:8000/live.m3u8?m=abc123&token=<share_token>"
 
 ### Share Links
 
-Share links are single-item, time-limited tokens meant to be pasted into a VRChat video player without exposing the rest of the library. All share-management endpoints require `ADMIN_API_KEY`.
+Share links are single-item, time-limited tokens meant to be pasted into a VRChat video player without exposing the rest of the library. All share-management endpoints require the `JELLYFIN_API_KEY` admin credential.
 
 ```
 POST /share
@@ -83,7 +83,7 @@ Revokes a share link immediately.
 
 **Example:**
 ```bash
-curl -X POST -H "X-Admin-Key: $ADMIN_API_KEY" -H 'Content-Type: application/json' \
+curl -X POST -H "X-Admin-Key: $JELLYFIN_API_KEY" -H 'Content-Type: application/json' \
   -d '{"media_id":"abc123","ttl_seconds":3600}' \
   http://proxy:8000/share
 ```

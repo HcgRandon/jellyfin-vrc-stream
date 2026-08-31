@@ -15,7 +15,7 @@ public class PluginConfiguration : BasePluginConfiguration
     public string ProxyBaseUrl { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the admin API key configured on the proxy (ADMIN_API_KEY).
+    /// Gets or sets the admin API key configured on the proxy (JELLYFIN_API_KEY).
     /// Sent as the X-Admin-Key header when creating share links. Never exposed
     /// to the browser - only used server-side by <see cref="Api.VrcShareController"/>.
     /// </summary>

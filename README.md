@@ -83,7 +83,7 @@ kubectl get svc jellyfin-vrc-stream-service
    - **Repository URL:** `https://raw.githubusercontent.com/C9Glax/jellyfin-vrc-stream/main/jellyfin-plugin-vrc-share/manifest.json`
 2. Restart Jellyfin to refresh repositories
 3. Go to **Catalog**, find **VRC Share** under General, install it, and restart Jellyfin (again).
-4. In **Plugins → VRC Share**, set **Proxy Base URL** and **Proxy Admin API Key** (matching `ADMIN_API_KEY` above).
+4. In **Plugins → VRC Share**, set **Proxy Base URL** and **Proxy Admin API Key** (matching `JELLYFIN_API_KEY` above).
 5. Open any movie or episode as an administrator - a **VR Share Link** button appears next to Play.
 
 ## Architecture

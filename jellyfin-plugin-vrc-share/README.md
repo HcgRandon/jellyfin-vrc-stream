@@ -14,7 +14,7 @@ UI. Click it as an administrator and it:
 ## Requirements
 
 - Jellyfin 10.11.x
-- A jellyfin-vrc-stream proxy (this repo) with `ADMIN_API_KEY` set
+- A jellyfin-vrc-stream proxy (this repo) with `JELLYFIN_API_KEY` set
 
 ## Install via plugin repository (recommended)
 
@@ -51,13 +51,13 @@ The compiled plugin is at
 
 ## Configure
 
-1. On the proxy itself, make sure `ADMIN_API_KEY` is actually set (and the
+1. On the proxy itself, make sure `JELLYFIN_API_KEY` is actually set (and the
    proxy restarted) - if it isn't, every request to `/share` fails with
    `401: Admin API key is not configured on the server`, regardless of what
    the plugin sends.
 2. In the admin dashboard, go to **Plugins → VRC Share** and set:
    - **Proxy Base URL** - e.g. `https://stream.example.com`
-   - **Proxy Admin API Key** - must match `ADMIN_API_KEY` on the proxy exactly
+   - **Proxy Admin API Key** - must match `JELLYFIN_API_KEY` on the proxy exactly
    - **Default link lifetime** - defaults to 86400 seconds (24h)
 3. Open any movie or episode as an administrator - a headset icon button
    appears next to Play. Click it, then paste the copied URL into your VRChat

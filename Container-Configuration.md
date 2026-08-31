@@ -3,9 +3,8 @@
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `JELLYFIN_URL` | Jellyfin server URL | `http://jellyfin:8096` |
-| `JELLYFIN_API_KEY` | Jellyfin API key | (required) |
+| `JELLYFIN_API_KEY` | **Required.** Jellyfin API key - also doubles as the proxy's own admin credential (send as `X-Admin-Key` header or `admin_key` query param) for admin/browsing endpoints and creating share links | (none - disables those endpoints) |
 | `CACHE_DIR` | HLS cache directory | `/tmp/hls-cache` |
-| `ADMIN_API_KEY` | **Required.** Key for admin/browsing endpoints and creating share links | (none - disables those endpoints) |
 | `PUBLIC_BASE_URL` | External base URL used to build share link URLs | (falls back to request base URL) |
 | `DEFAULT_SHARE_TTL_SECONDS` | Default share link lifetime in seconds | `86400` (24h) |
 | `STREAM_IDLE_TIMEOUT` | Cleanup streams idle for N seconds (0=disable) | `300` (5 min) |

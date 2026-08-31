@@ -716,7 +716,7 @@
 
         function ensureAdminKey() {
             if (!adminKey) {
-                const entered = prompt('Enter the proxy ADMIN_API_KEY to use this dashboard:');
+                const entered = prompt('Enter the proxy JELLYFIN_API_KEY to use this dashboard:');
                 if (entered) {
                     adminKey = entered.trim();
                     localStorage.setItem(ADMIN_KEY_STORAGE, adminKey);
