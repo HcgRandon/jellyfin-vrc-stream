@@ -80,10 +80,14 @@ keep working regardless.
 
 1. Bump the version however you like (the release workflow overwrites
    `AssemblyVersion`/`FileVersion` in the `.csproj` from the tag anyway).
-2. Create and push a tag named `plugin-vX.Y.Z.W`, e.g. `plugin-v1.1.0.0`.
-3. Publish a GitHub Release from that tag with your changelog as the release
-   notes.
-4. [`plugin-vrc-share-release.yaml`](../.github/workflows/plugin-vrc-share-release.yaml)
-   builds the plugin, uploads `Jellyfin.Plugin.VrcShare_X.Y.Z.W.zip` to the
-   release, and commits a new entry to `manifest.json` - anyone with this
+2. Create and push a tag named `plugin-vX.Y.Z.W`, e.g.:
+   ```bash
+   git tag plugin-v1.1.0.0
+   git push origin plugin-v1.1.0.0
+   ```
+   That's it - no manual "Publish release" step needed.
+3. [`plugin-vrc-share-release.yaml`](../.github/workflows/plugin-vrc-share-release.yaml)
+   builds the plugin, creates the GitHub Release for that tag (with
+   auto-generated notes) with `Jellyfin.Plugin.VrcShare_X.Y.Z.W.zip`
+   attached, and commits a new entry to `manifest.json` - anyone with this
    repository added in Jellyfin sees the update automatically.
