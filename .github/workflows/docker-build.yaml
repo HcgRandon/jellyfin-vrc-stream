@@ -1,5 +1,9 @@
-name: Build and Push Docker Image
+name: "🔨 Build Docker Image"
 
+# CI/dev build - runs on every push to main and pushes an image tagged only
+# by commit SHA (no "latest", no version tag), so day-to-day commits don't
+# move the tag real deployments pull. See docker-release.yaml for that -
+# it runs when a version tag is pushed and tags "latest" + the version.
 on:
   push:
     branches:
@@ -31,18 +35,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata (SHA tag only)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=ref,event=branch,suffix=-{{sha}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long,prefix=sha-
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
