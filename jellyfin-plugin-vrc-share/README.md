@@ -67,9 +67,9 @@ extension point, so this plugin injects a small `<script>` tag into
 same technique used by plugins like
 [Jellyfin-JavaScript-Injector](https://github.com/n00bcodr/Jellyfin-JavaScript-Injector).
 Nothing on disk is modified, so this survives jellyfin-web updates. The
-injected script (`inject.js`) only adds the button into `.detailButtons` (the
+injected script (`inject.js`) only adds the button into `.mainDetailButtons` (the
 row holding Play/More) rather than hooking Jellyfin's internal overflow-menu
-item list, since `.detailButtons` has been a stable class across jellyfin-web
+item list, since `.mainDetailButtons` has been a stable class across jellyfin-web
 releases - the tradeoff is a dedicated button instead of a "⋮" menu entry.
 
 If this ever conflicts with another script-injecting plugin, tick **Disable
