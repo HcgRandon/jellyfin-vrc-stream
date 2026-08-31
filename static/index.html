@@ -708,6 +708,43 @@
         const resultsDiv = document.getElementById('results');
         const baseUrl = window.location.origin;
 
+        // --- Admin key handling ---
+        // All admin/browsing endpoints require an admin key (see README "Breaking change:
+        // access control"). We prompt for it once and remember it in this browser.
+        const ADMIN_KEY_STORAGE = 'vrc_admin_key';
+        let adminKey = localStorage.getItem(ADMIN_KEY_STORAGE) || '';
+
+        function ensureAdminKey() {
+            if (!adminKey) {
+                const entered = prompt('Enter the proxy ADMIN_API_KEY to use this dashboard:');
+                if (entered) {
+                    adminKey = entered.trim();
+                    localStorage.setItem(ADMIN_KEY_STORAGE, adminKey);
+                }
+            }
+            return adminKey;
+        }
+
+        function withAdminKey(url) {
+            ensureAdminKey();
+            if (!adminKey) return url;
+            const separator = url.includes('?') ? '&' : '?';
+            return `${url}${separator}admin_key=${encodeURIComponent(adminKey)}`;
+        }
+
+        async function authFetch(url, options = {}) {
+            ensureAdminKey();
+            const headers = { ...(options.headers || {}) };
+            if (adminKey) headers['X-Admin-Key'] = adminKey;
+            const response = await fetch(url, { ...options, headers });
+            if (response.status === 401) {
+                alert('Admin key rejected by the proxy. Please re-enter it.');
+                adminKey = '';
+                localStorage.removeItem(ADMIN_KEY_STORAGE);
+            }
+            return response;
+        }
+
         let searchTimeout;
         let ws = null;
         let wsReconnectTimeout = null;
@@ -777,7 +814,7 @@
         // Load recent media on page load
         async function loadRecent() {
             try {
-                const response = await fetch(`${baseUrl}/recent`);
+                const response = await authFetch(`${baseUrl}/recent`);
                 const data = await response.json();
 
                 if (data.items.length === 0) {
@@ -812,7 +849,7 @@
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const response = await fetch(`${baseUrl}/search?q=${encodeURIComponent(query)}`);
+                    const response = await authFetch(`${baseUrl}/search?q=${encodeURIComponent(query)}`);
                     const data = await response.json();
 
                     console.log('Search results:', data);
@@ -877,7 +914,7 @@
             if (item.year) meta.push(item.year);
 
             const imageHtml = item.image
-                ? `<div class="result-image"><img src="${item.image}" alt="${item.name}"></div>`
+                ? `<div class="result-image"><img src="${withAdminKey(item.image)}" alt="${item.name}"></div>`
                 : '<div class="result-image"></div>';
 
             // Series get expand button
@@ -931,7 +968,7 @@
             // Load stream options if not already loaded
             if (container.dataset.loaded !== 'true') {
                 try {
-                    const response = await fetch(`${baseUrl}/media/${mediaId}/streams`);
+                    const response = await authFetch(`${baseUrl}/media/${mediaId}/streams`);
                     const data = await response.json();
 
                     const audioOptions = (data.audio_streams || []).map(s =>
@@ -942,7 +979,7 @@
                         `<option value="${s.index}" ${s.index === data.default_subtitle ? 'selected' : ''}>${s.title || s.language}</option>`
                     ).join('');
 
-                    const profilesResponse = await fetch(`${baseUrl}/profiles`);
+                    const profilesResponse = await authFetch(`${baseUrl}/profiles`);
                     const profilesData = await profilesResponse.json();
                     const profileOptions = profilesData.profiles.map(p =>
                         `<option value="${p.id}" ${p.id === 'high' ? 'selected' : ''}>${p.name} - ${p.description}</option>`
@@ -970,21 +1007,24 @@
                         </div>
                         <div style="margin-top: 15px; display: flex; gap: 15px;">
                             <div style="flex: 1;">
-                                <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL:</div>
+                                <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL (admin, no expiry):</div>
                                 <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="vod-url-${mediaId}"></div>
-                                <div style="margin-top: 5px; display: flex; gap: 8px;">
+                                <div style="margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap;">
                                     <button class="btn-copy" onclick="copyUrlFromDiv('vod-url-${mediaId}', this)">Copy VOD</button>
                                     <button class="btn-vod" onclick="prewarmFromUI('${mediaId}', 'vod')">Pre-warm</button>
+                                    <button class="btn-live" onclick="createShareLinkFromUI('${mediaId}', 'vod', this)">Create Share Link</button>
                                 </div>
                             </div>
                             <div style="flex: 1;">
-                                <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL:</div>
+                                <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL (admin, no expiry):</div>
                                 <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="live-url-${mediaId}"></div>
-                                <div style="margin-top: 5px;">
+                                <div style="margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap;">
                                     <button class="btn-copy" onclick="copyUrlFromDiv('live-url-${mediaId}', this)">Copy Live</button>
+                                    <button class="btn-live" onclick="createShareLinkFromUI('${mediaId}', 'live', this)">Create Share Link</button>
                                 </div>
                             </div>
                         </div>
+                        <div class="url-display" id="share-result-${mediaId}"></div>
                     `;
 
                     container.dataset.loaded = 'true';
@@ -1041,6 +1081,69 @@
             copyUrl(url, button);
         }
 
+        async function createShareLink(mediaId, mode, audio, subtitle, profile, resultDiv, button) {
+            const originalText = button ? button.textContent : null;
+            if (button) {
+                button.disabled = true;
+                button.textContent = 'Creating…';
+            }
+            try {
+                const body = { media_id: mediaId, mode };
+                if (audio !== null && audio !== undefined && audio !== '') body.audio = parseInt(audio);
+                if (subtitle !== null && subtitle !== undefined && subtitle !== '') body.subtitle = parseInt(subtitle);
+                if (profile) body.profile = profile;
+
+                const response = await authFetch(`${baseUrl}/share`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.detail || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                const expiresIn = Math.round((data.expires_at - Date.now() / 1000) / 60);
+
+                if (resultDiv) {
+                    resultDiv.classList.add('show');
+                    resultDiv.innerHTML = `
+                        <div style="margin-bottom: 8px;">Share link (expires in ~${expiresIn} min):</div>
+                        <div style="word-break: break-all; margin-bottom: 8px;">${data.url}</div>
+                        <button class="btn-copy" onclick="copyUrl('${data.url}', this)">Copy Share Link</button>
+                    `;
+                } else {
+                    await copyUrl(data.url, button);
+                }
+            } catch (error) {
+                alert(`Failed to create share link: ${error.message}`);
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+            }
+        }
+
+        function createShareLinkFromUI(mediaId, mode, button) {
+            const audioSelect = document.getElementById(`audio-${mediaId}`);
+            const subtitleSelect = document.getElementById(`subtitle-${mediaId}`);
+            const profileSelect = document.getElementById(`profile-${mediaId}`);
+            const resultDiv = document.getElementById(`share-result-${mediaId}`);
+
+            createShareLink(
+                mediaId,
+                mode,
+                audioSelect?.value,
+                subtitleSelect?.value,
+                profileSelect?.value,
+                resultDiv,
+                button
+            );
+        }
+
         async function toggleEpisodes(seriesId, button) {
             const container = document.getElementById(`episodes-${seriesId}`);
 
@@ -1053,7 +1156,7 @@
             // Load episodes if not already loaded
             if (container.dataset.loaded !== 'true') {
                 try {
-                    const response = await fetch(`${baseUrl}/series/${seriesId}/episodes`);
+                    const response = await authFetch(`${baseUrl}/series/${seriesId}/episodes`);
                     const data = await response.json();
 
                     if (data.episodes.length === 0) {
@@ -1084,7 +1187,7 @@
                                 const episodesHtml = episodes.map(ep => {
                                     const epTitle = `E${ep.episode} - ${ep.name}`;
                                     const epImage = ep.image
-                                        ? `<div class="result-image"><img src="${ep.image}" alt="${ep.name}"></div>`
+                                        ? `<div class="result-image"><img src="${withAdminKey(ep.image)}" alt="${ep.name}"></div>`
                                         : '<div class="result-image"></div>';
 
                                     return `
@@ -1121,7 +1224,7 @@
                             container.innerHTML = data.episodes.map(ep => {
                                 const epTitle = `S${ep.season}E${ep.episode} - ${ep.name}`;
                                 const epImage = ep.image
-                                    ? `<div class="result-image"><img src="${ep.image}" alt="${ep.name}"></div>`
+                                    ? `<div class="result-image"><img src="${withAdminKey(ep.image)}" alt="${ep.name}"></div>`
                                     : '<div class="result-image"></div>';
 
                                 return `
@@ -1223,7 +1326,7 @@
                             : s.media_name || s.media_id;
 
                         const imageHtml = s.media_image
-                            ? `<img src="${s.media_image}" class="stream-image" alt="${s.media_name}">`
+                            ? `<img src="${withAdminKey(s.media_image)}" class="stream-image" alt="${s.media_name}">`
                             : '';
 
                         const lockIndicator = s.locked ? ' 🔒' : '';
@@ -1353,7 +1456,7 @@
             const container = document.getElementById('streams-container');
 
             try {
-                const response = await fetch(`${baseUrl}/streams`);
+                const response = await authFetch(`${baseUrl}/streams`);
                 const data = await response.json();
                 renderStreamsHTML(container, data);
             } catch (error) {
@@ -1367,7 +1470,7 @@
             }
 
             try {
-                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}`, { method: 'DELETE' });
+                await authFetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}`, { method: 'DELETE' });
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1375,7 +1478,7 @@
 
         async function lockStream(streamKey) {
             try {
-                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/lock`, { method: 'POST' });
+                await authFetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/lock`, { method: 'POST' });
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1383,7 +1486,7 @@
 
         async function unlockStream(streamKey) {
             try {
-                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/unlock`, { method: 'POST' });
+                await authFetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/unlock`, { method: 'POST' });
             } catch (error) {
                 alert(`Error: ${error.message}`);
             }
@@ -1395,7 +1498,7 @@
             }
 
             try {
-                const response = await fetch(`${baseUrl}/cleanup`, { method: 'POST' });
+                const response = await authFetch(`${baseUrl}/cleanup`, { method: 'POST' });
                 const data = await response.json();
                 alert(`Cleanup complete!\n\nIdle streams removed: ${data.removed_idle}\nSize-based removals: ${data.removed_size}\nCache size: ${data.cache_size_mb} MB`);
             } catch (error) {
@@ -1433,7 +1536,7 @@
                 result.classList.add('show');
 
                 // Fetch available streams
-                const response = await fetch(`${baseUrl}/media/${mediaId}/streams`);
+                const response = await authFetch(`${baseUrl}/media/${mediaId}/streams`);
                 const data = await response.json();
 
                 const audioOptions = (data.audio_streams || []).map(s =>
@@ -1461,21 +1564,24 @@
                     </div>
                     <div style="margin-top: 15px; display: flex; gap: 15px;">
                         <div style="flex: 1;">
-                            <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL:</div>
+                            <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">VOD Mode URL (admin, no expiry):</div>
                             <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="converter-vod-url"></div>
-                            <div style="margin-top: 5px; display: flex; gap: 8px;">
+                            <div style="margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap;">
                                 <button class="btn-copy" onclick="copyUrlFromDiv('converter-vod-url', this)">Copy VOD</button>
                                 <button class="btn-vod" onclick="converterPrewarm('vod')">Pre-warm</button>
+                                <button class="btn-live" onclick="createShareLinkFromConverter('vod', this)">Create Share Link</button>
                             </div>
                         </div>
                         <div style="flex: 1;">
-                            <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL:</div>
+                            <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 5px;">Live Mode URL (admin, no expiry):</div>
                             <div style="background: #f0f4f8; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;" id="converter-live-url"></div>
-                            <div style="margin-top: 5px;">
+                            <div style="margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap;">
                                 <button class="btn-copy" onclick="copyUrlFromDiv('converter-live-url', this)">Copy Live</button>
+                                <button class="btn-live" onclick="createShareLinkFromConverter('live', this)">Create Share Link</button>
                             </div>
                         </div>
                     </div>
+                    <div class="url-display" id="converter-share-result"></div>
                 `;
 
                 // Store media ID for later use
@@ -1526,6 +1632,16 @@
             startPrewarm(mediaId, audio, subtitle, mode);
         }
 
+        function createShareLinkFromConverter(mode, button) {
+            const result = document.getElementById('converterResult');
+            const mediaId = result.dataset.mediaId;
+            const audioSelect = document.getElementById('converter-audio');
+            const subtitleSelect = document.getElementById('converter-subtitle');
+            const resultDiv = document.getElementById('converter-share-result');
+
+            createShareLink(mediaId, mode, audioSelect?.value, subtitleSelect?.value, null, resultDiv, button);
+        }
+
         function prewarmFromUI(mediaId, mode) {
             // Get selected audio, subtitle, and profile values
             const audioSelect = document.getElementById(`audio-${mediaId}`);
@@ -1556,7 +1672,7 @@
                     params.append('profile_id', profile);
                 }
 
-                const response = await fetch(`${baseUrl}/prewarm/start?${params.toString()}`, {
+                const response = await authFetch(`${baseUrl}/prewarm/start?${params.toString()}`, {
                     method: 'POST'
                 });
                 const data = await response.json();
@@ -1596,7 +1712,7 @@
 
         async function cancelPrewarm(streamKey) {
             try {
-                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/prewarm/cancel`, {
+                await authFetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/prewarm/cancel`, {
                     method: 'POST'
                 });
                 showToast('Pre-warm cancelled', 'info');
@@ -1607,7 +1723,7 @@
 
         async function dismissPrewarmError(streamKey) {
             try {
-                await fetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/prewarm`, {
+                await authFetch(`${baseUrl}/streams/${encodeURIComponent(streamKey)}/prewarm`, {
                     method: 'DELETE'
                 });
                 showToast('Error dismissed', 'info');
@@ -1674,7 +1790,7 @@
             const container = document.getElementById('profiles-container');
 
             try {
-                const response = await fetch(`${baseUrl}/profiles`);
+                const response = await authFetch(`${baseUrl}/profiles`);
                 const data = await response.json();
 
                 if (data.profiles.length === 0) {
@@ -1777,7 +1893,7 @@
             }
 
             try {
-                const response = await fetch(`${baseUrl}/profiles`, {
+                const response = await authFetch(`${baseUrl}/profiles`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1804,7 +1920,7 @@
             }
 
             try {
-                const response = await fetch(`${baseUrl}/profiles/${profileId}`, {
+                const response = await authFetch(`${baseUrl}/profiles/${profileId}`, {
                     method: 'DELETE'
                 });
 

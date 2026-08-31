@@ -51,3 +51,7 @@ secret-*.yaml
 # Cache
 /tmp/
 *.cache
+
+# .NET / Jellyfin plugin build output
+jellyfin-plugin-vrc-share/**/bin/
+jellyfin-plugin-vrc-share/**/obj/

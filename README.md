@@ -9,6 +9,16 @@ A simple FastAPI proxy service that:
 - **Streams once from Jellyfin** - Single transcoding session regardless of viewer count
 - **Fans out to multiple clients** - All viewers watch the same stream
 - **Hides API key** - Clients connect without exposing Jellyfin credentials
+- **Time-limited share links** - Playback requires a per-item token that expires, instead of a permanent unauthenticated URL
+
+## ⚠️ Breaking change: access control
+
+Every endpoint now requires a credential:
+
+- **Admin/browsing endpoints** (`/search`, `/recent`, `/media/*/streams`, `/streams`, `/profiles`, `/thumbnail/*`, `/cleanup`, share management) require the `ADMIN_API_KEY` env var to be set, and requests must send it as either the `X-Admin-Key` header or an `admin_key` query param.
+- **Playback endpoints** (`/vod.m3u8`, `/live.m3u8`, and their segment routes) require either the admin key, or a valid, non-expired **share token** created via `POST /share`. Segment/sub-playlist URLs embedded in the returned playlist automatically carry the same credential, so players don't need to do anything extra.
+
+If `ADMIN_API_KEY` is left unset, all of the above endpoints refuse every request - the proxy is unusable until it's configured. See `.env.example`.
 
 ## How It Works
 
@@ -30,41 +40,90 @@ A simple FastAPI proxy service that:
 
 ### VOD Mode (Seekable, Full Video)
 ```
-GET /vod.m3u8?m={media_id}
+GET /vod.m3u8?m={media_id}&token={share_token}
 ```
 
-Uses Jellyfin's `main.m3u8` endpoint for full video playback with seeking support.
+Uses Jellyfin's `main.m3u8` endpoint for full video playback with seeking support. Requires a valid share `token` (see [Share Links](#share-links)) or `admin_key`.
 
 **Query Parameters:**
 - `m` (required): Jellyfin media item ID
+- `token` / `admin_key` (one required): share token from `POST /share`, or the admin API key
 - `audio` (optional): Audio stream index (auto-selects jpn > eng if not specified)
 - `subtitle` (optional): Subtitle stream index (auto-selects eng if not specified)
 
 **Example:**
 ```bash
-# Auto-select best streams (Japanese audio + English subtitles)
-curl http://proxy:8000/vod.m3u8?m=abc123
+# Play using a share link (auto-selects best streams)
+curl "http://proxy:8000/vod.m3u8?m=abc123&token=<share_token>"
 
-# Manual selection
-curl http://proxy:8000/vod.m3u8?m=abc123&audio=2&subtitle=5
+# Manual selection using the admin key
+curl "http://proxy:8000/vod.m3u8?m=abc123&audio=2&subtitle=5&admin_key=$ADMIN_API_KEY"
 ```
 
 ### Live Streaming Mode
 ```
-GET /live.m3u8?m={media_id}
+GET /live.m3u8?m={media_id}&token={share_token}
 ```
 
-Uses Jellyfin's `live.m3u8` endpoint for real-time streaming (no seeking).
+Uses Jellyfin's `live.m3u8` endpoint for real-time streaming (no seeking). Requires a valid share `token` or `admin_key`, same as VOD mode.
 
 **Query Parameters:**
 - `m` (required): Jellyfin media item ID
+- `token` / `admin_key` (one required): share token from `POST /share`, or the admin API key
 - `audio` (optional): Audio stream index (auto-selects jpn > eng if not specified)
 - `subtitle` (optional): Subtitle stream index (auto-selects eng if not specified)
 
 **Example:**
 ```bash
 # Live stream with auto-selected streams
-curl http://proxy:8000/live.m3u8?m=abc123
+curl "http://proxy:8000/live.m3u8?m=abc123&token=<share_token>"
+```
+
+### Share Links
+
+Share links are single-item, time-limited tokens meant to be pasted into a VRChat video player without exposing the rest of the library. All share-management endpoints require `ADMIN_API_KEY`.
+
+```
+POST /share
+```
+Body (JSON):
+```json
+{
+  "media_id": "abc123",
+  "mode": "vod",
+  "audio": null,
+  "subtitle": null,
+  "profile": null,
+  "ttl_seconds": 3600
+}
+```
+Only `media_id` is required; `ttl_seconds` defaults to `DEFAULT_SHARE_TTL_SECONDS`. Returns:
+```json
+{
+  "token": "…",
+  "url": "https://stream.example.com/vod.m3u8?m=abc123&token=…",
+  "media_id": "abc123",
+  "mode": "vod",
+  "created_at": 1730000000.0,
+  "expires_at": 1730003600.0
+}
+```
+
+```
+GET /shares
+```
+Lists active (non-expired) share links.
+
+```
+DELETE /share/{token}
+```
+Revokes a share link immediately.
+
+**Example:**
+```bash
+curl -X POST -H "X-Admin-Key: $ADMIN_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"media_id":"abc123","ttl_seconds":3600}' \
+  http://proxy:8000/share
 ```
 
 ### Get Segments
@@ -105,6 +164,9 @@ Stop and cleanup a specific stream by its stream_key (from `/streams` endpoint).
 | `JELLYFIN_URL` | Jellyfin server URL | `http://jellyfin:8096` |
 | `JELLYFIN_API_KEY` | Jellyfin API key | (required) |
 | `CACHE_DIR` | HLS cache directory | `/tmp/hls-cache` |
+| `ADMIN_API_KEY` | **Required.** Key for admin/browsing endpoints and creating share links | (none - disables those endpoints) |
+| `PUBLIC_BASE_URL` | External base URL used to build share link URLs | (falls back to request base URL) |
+| `DEFAULT_SHARE_TTL_SECONDS` | Default share link lifetime in seconds | `86400` (24h) |
 | `STREAM_IDLE_TIMEOUT` | Cleanup streams idle for N seconds (0=disable) | `300` (5 min) |
 | `CLEANUP_INTERVAL` | Run cleanup every N seconds (0=disable) | `60` |
 | `MAX_CACHE_SIZE_MB` | Max cache size in MB (0=disable) | `1800` (1.8 GB) |
@@ -161,19 +223,13 @@ kubectl get svc jellyfin-vrc-stream-service
 
 ## VRChat Usage
 
-Use the proxy URL in VRChat video players:
+Generate a share link (via `POST /share`, the `/manage` dashboard, or the Jellyfin plugin) and paste the returned URL directly into a VRChat video player:
 
-**VOD Mode (recommended for full videos with seeking):**
 ```
-http://proxy:8000/vod.m3u8?m=<media_id>
-```
-
-**Live Mode (for real-time streaming without seeking):**
-```
-http://proxy:8000/live.m3u8?m=<media_id>
+https://proxy.example.com/vod.m3u8?m=<media_id>&token=<share_token>
 ```
 
-**All viewers using the same URL watch the same synchronized stream!**
+**All viewers using the same URL watch the same synchronized stream, until the link expires.**
 
 ## Architecture
 
