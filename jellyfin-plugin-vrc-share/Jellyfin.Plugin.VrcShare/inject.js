@@ -4,7 +4,8 @@
     // Adds a "VR Share Link" button to the item detail page's button row
     // (admins only). Clicking it asks the plugin's own backend to mint a
     // time-limited jellyfin-vrc-stream share link and copies it to the
-    // clipboard. Uses `.detailButtons` (the row holding Play/More/etc.)
+    // clipboard. Uses `.mainDetailButtons` (the row holding Play/More/etc.,
+    // see src/apps/legacy/controllers/itemDetails/index.html in jellyfin-web)
     // rather than the "..." overflow menu, since that container class has
     // been stable across jellyfin-web releases for a long time - the
     // overflow menu's internal item list is more likely to change shape.
@@ -105,7 +106,7 @@
             return;
         }
 
-        var container = document.querySelector('.detailButtons');
+        var container = document.querySelector('.mainDetailButtons');
         if (!container || container.querySelector('.btnVrcShare')) {
             return;
         }
@@ -123,7 +124,13 @@
             if (container.querySelector('.btnVrcShare')) {
                 return;
             }
-            container.appendChild(buildButton(itemId));
+            var button = buildButton(itemId);
+            var moreCommandsBtn = container.querySelector('.btnMoreCommands');
+            if (moreCommandsBtn) {
+                container.insertBefore(button, moreCommandsBtn);
+            } else {
+                container.appendChild(button);
+            }
         }).catch(function () {
             // Not logged in yet, or request failed - just don't show the button.
         });
