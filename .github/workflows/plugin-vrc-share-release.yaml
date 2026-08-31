@@ -1,20 +1,21 @@
 name: "🚀 Release VRC Share Plugin"
 
-# Triggered by publishing a GitHub Release whose tag looks like "plugin-vX.Y.Z.W"
-# (e.g. plugin-v1.0.0.0) - separate from the proxy's own Docker releases so the
-# two don't trigger each other. Builds the plugin, uploads a zip to the release,
-# and appends the new version to manifest.json so it shows up for anyone who has
-# added this repo's manifest.json URL as a Jellyfin plugin repository.
+# Triggered by pushing a tag like "plugin-v1.0.0.0" - separate from the
+# proxy's own Docker release tags (vX.Y.Z) so the two never trigger each
+# other. Builds the plugin, creates the GitHub Release for the tag (with the
+# zip attached), and appends the new version to manifest.json so it shows up
+# for anyone who has added this repo's manifest.json URL as a Jellyfin
+# plugin repository.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "plugin-v*"
 
 permissions:
   contents: write
 
 jobs:
   build-and-publish:
-    if: startsWith(github.event.release.tag_name, 'plugin-v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,9 +35,9 @@ jobs:
       - name: Extract version from tag
         id: version
         env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          VERSION="${TAG_NAME#plugin-v}"
+          VERSION="${REF_NAME#plugin-v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set assembly version
@@ -61,11 +62,13 @@ jobs:
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
           echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
 
-      - name: Upload release asset
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ZIP_PATH: jellyfin-plugin-vrc-share/${{ steps.package.outputs.zip_name }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "$ZIP_PATH" --repo "${{ github.repository }}"
+      - name: Create GitHub Release and upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "VRC Share ${{ steps.version.outputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: jellyfin-plugin-vrc-share/${{ steps.package.outputs.zip_name }}
 
       - name: Update manifest.json
         env:
@@ -73,8 +76,7 @@ jobs:
           CHECKSUM: ${{ steps.package.outputs.checksum }}
           ZIP_NAME: ${{ steps.package.outputs.zip_name }}
           REPO: ${{ github.repository }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
-          CHANGELOG: ${{ github.event.release.body }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           python3 - <<'PYEOF'
           import json
@@ -85,13 +87,16 @@ jobs:
           with open(manifest_path) as f:
               manifest = json.load(f)
 
+          repo = os.environ["REPO"]
+          tag = os.environ["TAG_NAME"]
+
           entry = {
               "version": os.environ["VERSION"],
-              "changelog": os.environ.get("CHANGELOG") or "See GitHub release notes.",
+              "changelog": f"See https://github.com/{repo}/releases/tag/{tag} for details.",
               "targetAbi": "10.11.0.0",
               "sourceUrl": "https://github.com/{repo}/releases/download/{tag}/{zip}".format(
-                  repo=os.environ["REPO"],
-                  tag=os.environ["TAG_NAME"],
+                  repo=repo,
+                  tag=tag,
                   zip=os.environ["ZIP_NAME"],
               ),
               "checksum": os.environ["CHECKSUM"],
