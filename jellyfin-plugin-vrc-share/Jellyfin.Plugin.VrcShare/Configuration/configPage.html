@@ -63,37 +63,41 @@
                 </form>
             </div>
         </div>
-    </div>
-    <script type="text/javascript">
-        (function () {
-            var VrcSharePluginId = 'a3f1e6d2-8b4c-4e9a-9c3f-2d7a5b6e1234';
 
-            document.querySelector('#VrcShareConfigPage').addEventListener('pageshow', function () {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(VrcSharePluginId).then(function (config) {
-                    document.querySelector('#ProxyBaseUrl').value = config.ProxyBaseUrl || '';
-                    document.querySelector('#AdminApiKey').value = config.AdminApiKey || '';
-                    document.querySelector('#DefaultTtlSeconds').value = config.DefaultTtlSeconds || 86400;
-                    document.querySelector('#DisableScriptInjectionMiddleware').checked = !!config.DisableScriptInjectionMiddleware;
-                    Dashboard.hideLoadingMsg();
-                });
-            });
+        <script type="text/javascript">
+            var VrcShareConfig = {
+                pluginUniqueId: 'a3f1e6d2-8b4c-4e9a-9c3f-2d7a5b6e1234'
+            };
 
-            document.querySelector('#VrcShareConfigForm').addEventListener('submit', function (e) {
-                e.preventDefault();
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(VrcSharePluginId).then(function (config) {
-                    config.ProxyBaseUrl = document.querySelector('#ProxyBaseUrl').value.trim();
-                    config.AdminApiKey = document.querySelector('#AdminApiKey').value;
-                    config.DefaultTtlSeconds = parseInt(document.querySelector('#DefaultTtlSeconds').value, 10) || 86400;
-                    config.DisableScriptInjectionMiddleware = document.querySelector('#DisableScriptInjectionMiddleware').checked;
-                    ApiClient.updatePluginConfiguration(VrcSharePluginId, config).then(function (result) {
-                        Dashboard.processPluginConfigurationUpdateResult(result);
+            document.querySelector('#VrcShareConfigPage')
+                .addEventListener('pageshow', function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(VrcShareConfig.pluginUniqueId).then(function (config) {
+                        document.querySelector('#ProxyBaseUrl').value = config.ProxyBaseUrl || '';
+                        document.querySelector('#AdminApiKey').value = config.AdminApiKey || '';
+                        document.querySelector('#DefaultTtlSeconds').value = config.DefaultTtlSeconds || 86400;
+                        document.querySelector('#DisableScriptInjectionMiddleware').checked = !!config.DisableScriptInjectionMiddleware;
+                        Dashboard.hideLoadingMsg();
                     });
                 });
-                return false;
-            });
-        })();
-    </script>
+
+            document.querySelector('#VrcShareConfigForm')
+                .addEventListener('submit', function (e) {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(VrcShareConfig.pluginUniqueId).then(function (config) {
+                        config.ProxyBaseUrl = document.querySelector('#ProxyBaseUrl').value.trim();
+                        config.AdminApiKey = document.querySelector('#AdminApiKey').value;
+                        config.DefaultTtlSeconds = parseInt(document.querySelector('#DefaultTtlSeconds').value, 10) || 86400;
+                        config.DisableScriptInjectionMiddleware = document.querySelector('#DisableScriptInjectionMiddleware').checked;
+                        ApiClient.updatePluginConfiguration(VrcShareConfig.pluginUniqueId, config).then(function (result) {
+                            Dashboard.processPluginConfigurationUpdateResult(result);
+                        });
+                    });
+
+                    e.preventDefault();
+                    return false;
+                });
+        </script>
+    </div>
 </body>
 </html>
