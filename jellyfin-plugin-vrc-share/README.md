@@ -51,11 +51,15 @@ The compiled plugin is at
 
 ## Configure
 
-1. In the admin dashboard, go to **Plugins → VRC Share** and set:
+1. On the proxy itself, make sure `ADMIN_API_KEY` is actually set (and the
+   proxy restarted) - if it isn't, every request to `/share` fails with
+   `401: Admin API key is not configured on the server`, regardless of what
+   the plugin sends.
+2. In the admin dashboard, go to **Plugins → VRC Share** and set:
    - **Proxy Base URL** - e.g. `https://stream.example.com`
-   - **Proxy Admin API Key** - must match `ADMIN_API_KEY` on the proxy
+   - **Proxy Admin API Key** - must match `ADMIN_API_KEY` on the proxy exactly
    - **Default link lifetime** - defaults to 86400 seconds (24h)
-2. Open any movie or episode as an administrator - a **VR Share Link** button
+3. Open any movie or episode as an administrator - a headset icon button
    appears next to Play. Click it, then paste the copied URL into your VRChat
    video player.
 
