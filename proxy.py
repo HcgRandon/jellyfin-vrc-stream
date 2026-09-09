@@ -39,6 +39,20 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+def jellyfin_request(url: str, timeout: float = 10.0):
+    """Open a Jellyfin URL, authenticating with the Authorization header.
+
+    Jellyfin 12 disables legacy authorization by default (the api_key query
+    parameter and X-Emby-*/X-MediaBrowser-* headers), so the API key must be
+    sent as a standard Authorization header using the MediaBrowser scheme.
+    This also keeps the key out of URLs, logs and error messages.
+    """
+    req = urllib.request.Request(url, headers={
+        'Authorization': f'MediaBrowser Token="{settings.jellyfin_api_key}"',
+    })
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 class QualityProfile(BaseModel):
     """Quality profile for streaming"""
     id: str
@@ -490,10 +504,10 @@ async def startup_event():
 def get_item_info(item_id: str):
     """Fetch item info from Jellyfin"""
     # Use /Items with Ids filter and fields=MediaSources (required for Jellyfin 10.11+)
-    url = f"{settings.jellyfin_url}/Items?Ids={item_id}&fields=MediaSources&api_key={settings.jellyfin_api_key}"
+    url = f"{settings.jellyfin_url}/Items?Ids={item_id}&fields=MediaSources"
 
     try:
-        with urllib.request.urlopen(url, timeout=10.0) as response:
+        with jellyfin_request(url, timeout=10.0) as response:
             data = json.loads(response.read())
             items = data.get('Items', [])
             if not items:
@@ -746,7 +760,7 @@ async def fetch_and_cache(url: str, cache_path: Path, timeout: float = 60.0) -> 
 
     def _blocking_fetch():
         # Stream the content in chunks instead of loading all at once
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with jellyfin_request(url, timeout=timeout) as response:
             with open(cache_path, 'wb') as f:
                 chunk_size = 1024 * 1024  # 1MB chunks
                 while True:
@@ -790,7 +804,7 @@ def rewrite_playlist_vod(content: bytes, media_id: str) -> str:
         if '?' not in url:
             return url
         path, query = url.split('?', 1)
-        params = [p for p in query.split('&') if not p.startswith('api_key=')]
+        params = [p for p in query.split('&') if not p.lower().startswith(('api_key=', 'apikey='))]
         if params:
             return f"{path}?{'&'.join(params)}"
         return path
@@ -923,11 +937,11 @@ async def get_media_streams(media_id: str):
 @app.get("/series/{series_id}/episodes")
 async def get_series_episodes(series_id: str):
     """Get all episodes for a series"""
-    url = f"{settings.jellyfin_url}/Shows/{series_id}/Episodes?Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
+    url = f"{settings.jellyfin_url}/Shows/{series_id}/Episodes?Fields=Overview,PrimaryImageAspectRatio"
 
     try:
         def fetch():
-            with urllib.request.urlopen(url, timeout=10.0) as response:
+            with jellyfin_request(url, timeout=10.0) as response:
                 return json.loads(response.read())
 
         data = await asyncio.to_thread(fetch)
@@ -958,11 +972,11 @@ async def get_series_episodes(series_id: str):
 @app.get("/recent")
 async def get_recent_media(limit: int = Query(20, description="Number of items to return")):
     """Get recently added media"""
-    url = f"{settings.jellyfin_url}/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&Limit={limit}&api_key={settings.jellyfin_api_key}"
+    url = f"{settings.jellyfin_url}/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&Limit={limit}"
 
     try:
         def fetch():
-            with urllib.request.urlopen(url, timeout=10.0) as response:
+            with jellyfin_request(url, timeout=10.0) as response:
                 return json.loads(response.read())
 
         data = await asyncio.to_thread(fetch)
@@ -1002,11 +1016,11 @@ async def search_media(q: str = Query("", description="Search query")):
         return {"items": []}
 
     # Search Jellyfin Items API - only Series and Movies (episodes via expand)
-    url = f"{settings.jellyfin_url}/Items?searchTerm={urllib.parse.quote(q)}&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio&api_key={settings.jellyfin_api_key}"
+    url = f"{settings.jellyfin_url}/Items?searchTerm={urllib.parse.quote(q)}&Recursive=true&IncludeItemTypes=Series,Movie&Fields=Overview,PrimaryImageAspectRatio"
 
     try:
         def fetch():
-            with urllib.request.urlopen(url, timeout=10.0) as response:
+            with jellyfin_request(url, timeout=10.0) as response:
                 return json.loads(response.read())
 
         data = await asyncio.to_thread(fetch)
@@ -1081,7 +1095,6 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
 
         params = {
             'mediaSourceId': m,
-            'api_key': settings.jellyfin_api_key,
             'DeviceId': f'jellyfin-proxy{device_suffix}',
             'VideoCodec': 'h264',
             'AudioCodec': 'aac',
@@ -1140,7 +1153,7 @@ async def _get_stream_playlist(m: str, audio: Optional[int], subtitle: Optional[
         try:
             # Run blocking urllib call in thread pool to avoid blocking event loop
             def fetch_playlist():
-                with urllib.request.urlopen(jellyfin_url, timeout=60.0) as response:
+                with jellyfin_request(jellyfin_url, timeout=60.0) as response:
                     return response.read()
 
             content = await asyncio.to_thread(fetch_playlist)
@@ -1245,21 +1258,16 @@ async def get_vod_segment(media_id: str, segment_path: str, request: Request):
         if is_new_viewer:
             asyncio.create_task(broadcast_streams_update())
 
-    # Build Jellyfin URL preserving query params and adding api_key back
-    query_string = request.url.query
-    if query_string:
-        # Add api_key to the query string if not already present
-        if 'api_key=' not in query_string:
-            query_string = f"api_key={settings.jellyfin_api_key}&{query_string}"
-        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}?{query_string}"
-    else:
-        segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}?api_key={settings.jellyfin_api_key}"
+    # Build Jellyfin URL preserving query params (auth is sent via header, not the URL)
+    segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_path}"
+    if request.url.query:
+        segment_url = f"{segment_url}?{request.url.query}"
 
     # For playlists, fetch and rewrite (don't cache - always fetch fresh)
     if is_playlist:
         try:
             def fetch_playlist():
-                with urllib.request.urlopen(segment_url, timeout=60.0) as response:
+                with jellyfin_request(segment_url, timeout=60.0) as response:
                     return response.read()
 
             content = await asyncio.to_thread(fetch_playlist)
@@ -1330,7 +1338,7 @@ async def get_live_segment(stream_key: str, segment_file: str, request: Request)
             headers={"Access-Control-Allow-Origin": "*"}
         )
 
-    segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_file}?api_key={settings.jellyfin_api_key}"
+    segment_url = f"{settings.jellyfin_url}/Videos/{media_id}/{hls_dir}/{session_id}/{segment_file}"
 
     # Use longer timeout for first segment (transcoding startup)
     segment_num = segment_file.split('.')[0]
@@ -1494,7 +1502,6 @@ async def prewarm_worker(stream_key: str):
 
             params = {
                 'mediaSourceId': m,
-                'api_key': settings.jellyfin_api_key,
                 'DeviceId': f'jellyfin-proxy{device_suffix}',
                 'VideoCodec': 'h264',
                 'AudioCodec': 'aac',
@@ -1550,7 +1557,7 @@ async def prewarm_worker(stream_key: str):
         await broadcast_streams_update()
 
         def fetch_playlist():
-            with urllib.request.urlopen(jellyfin_url, timeout=120.0) as response:
+            with jellyfin_request(jellyfin_url, timeout=120.0) as response:
                 return response.read()
 
         content = await asyncio.to_thread(fetch_playlist)
@@ -1803,7 +1810,6 @@ async def get_thumbnail(
     """Proxy endpoint for Jellyfin thumbnails to avoid exposing backend URL"""
     # Build Jellyfin image URL with API key
     params = {
-        'api_key': settings.jellyfin_api_key,
         'maxHeight': str(maxHeight),
         'quality': str(quality)
     }
@@ -1813,7 +1819,7 @@ async def get_thumbnail(
     try:
         # Fetch image from Jellyfin
         def fetch_image():
-            with urllib.request.urlopen(image_url, timeout=10.0) as response:
+            with jellyfin_request(image_url, timeout=10.0) as response:
                 content_type = response.headers.get('Content-Type', 'image/jpeg')
                 return response.read(), content_type
 

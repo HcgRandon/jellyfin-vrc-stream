@@ -100,6 +100,8 @@ Stop and cleanup a specific stream by its stream_key (from `/streams` endpoint).
 
 ## Configuration
 
+> **Jellyfin compatibility:** the proxy authenticates with the standard `Authorization: MediaBrowser Token="..."` header, so it works with Jellyfin 12 (which disables the legacy `api_key` query parameter by default) as well as older 10.x releases.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `JELLYFIN_URL` | Jellyfin server URL | `http://jellyfin:8096` |
